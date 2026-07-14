@@ -36,7 +36,7 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.4"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.5"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
@@ -117,21 +117,23 @@ function teachingPeriods(c){
   if(current<c.end)periods.push({id:`p${periods.length}`,start:current,end:c.end,label:`${current}–${c.end}`});
   return periods;
 }
-function register(){
+function register(editId=null){
   if(!state.classes.length){
     app.innerHTML=`<section class="card"><h2>Create a class first</h2><button class="primary" data-route="classes">Create class</button></section>`;
     return;
   }
-  let c=cls();state.current=c.id;
-  app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY REGISTER</span><h2>Create Register</h2><p>Tick Present for each session. Tick Late where needed. Unticked Present means absent.</p></section>
+  const editing=editId?state.registers.find(r=>r.id===editId):null;
+  let c=editing?state.classes.find(x=>x.id===editing.classId):cls();
+  state.current=c.id;
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY REGISTER</span><h2>${editing?"Edit":"Create"} Register</h2><p>Tick Present for each session. Tick Late where needed. Unticked Present means absent.</p></section>
   <section class="card"><div class="grid">
     <label>Class<select id="rc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>
-    <label>Date<input id="rd" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
-    <label>Subject covered<input id="rs" placeholder="e.g. Installing floor joists"></label>
+    <label>Date<input id="rd" type="date" value="${editing?.date||new Date().toISOString().slice(0,10)}"></label>
+    <label>Subject covered<input id="rs" value="${esc(editing?.subject||"")}" placeholder="e.g. Installing floor joists"></label>
   </div></section>
   <section class="card"><div class="buttons"><button class="secondary" id="all">Mark all present</button><button class="secondary" id="none">Clear all</button></div><div id="rl" class="scroll"></div></section>
-  <section class="card"><label>Notes for today<textarea id="rn" placeholder="Add any comments about the lesson, class or individual learners."></textarea></label></section>
-  <section class="card"><button class="primary" id="saveReg">Save Register and Generate PDF</button></section>`;
+  <section class="card"><label>Notes for today<textarea id="rn" placeholder="Add any comments about the lesson, class or individual learners.">${esc(editing?.notes||"")}</textarea></label></section>
+  <section class="card"><button class="primary" id="saveReg">${editing?"Update Register and Generate PDF":"Save Register and Generate PDF"}</button></section>`;
 
   const draw=()=>{
     c=state.classes.find(x=>x.id===rc.value);
@@ -141,19 +143,20 @@ function register(){
       <th class="sticky-head">Performance</th></tr></thead><tbody>
       ${c.learners.map(l=>`<tr><th class="sticky-col">${esc(l.name)}</th>
         ${periods.map(p=>`<td>
-          <label class="tick-line"><input type="checkbox" data-present="${l.id}-${p.id}"> Present</label>
-          <label class="tick-line"><input type="checkbox" data-late="${l.id}-${p.id}"> Late</label>
+          <label class="tick-line"><input type="checkbox" data-present="${l.id}-${p.id}" ${["Present","Late"].includes(editing?.attendance?.[l.id]?.periods?.[p.id]?.status)?"checked":""}> Present</label>
+          <label class="tick-line"><input type="checkbox" data-late="${l.id}-${p.id}" ${editing?.attendance?.[l.id]?.periods?.[p.id]?.status==="Late"?"checked":""}> Late</label>
         </td>`).join("")}
         <td>
-          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Excellent"> Excellent</label>
-          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Average"> Average</label>
-          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Poor"> Poor</label>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Excellent" ${editing?.attendance?.[l.id]?.performance==="Excellent"?"checked":""}> Excellent</label>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Average" ${editing?.attendance?.[l.id]?.performance==="Average"?"checked":""}> Average</label>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Poor" ${editing?.attendance?.[l.id]?.performance==="Poor"?"checked":""}> Poor</label>
         </td></tr>`).join("")}
       </tbody></table>`;
     rl.querySelectorAll("[data-present]").forEach(ch=>ch.onchange=()=>{const late=rl.querySelector(`[data-late="${ch.dataset.present}"]`);if(!ch.checked)late.checked=false});
     rl.querySelectorAll("[data-late]").forEach(ch=>ch.onchange=()=>{if(ch.checked)rl.querySelector(`[data-present="${ch.dataset.late}"]`).checked=true});
   };
   draw();
+  if(editing)rc.disabled=true;
   rc.onchange=()=>{state.current=rc.value;save();draw()};
   all.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=true);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
   none.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=false);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
@@ -168,16 +171,22 @@ function register(){
         attendance[l.id].periods[p.id]={label:p.label,start:p.start,end:p.end,status:present?(late?"Late":"Present"):"Absent"};
       });
     });
-    const rec={id:id("reg"),classId:c.id,className:c.name,course:c.course,date:rd.value,subject:rs.value.trim(),notes:rn.value.trim(),periods,attendance};
-    state.registers.push(rec);save();await pdf(rec,c);alert("Register saved.");go("documents");
+    const rec={id:editing?.id||id("reg"),classId:c.id,className:c.name,course:c.course,date:rd.value,subject:rs.value.trim(),notes:rn.value.trim(),periods,attendance};
+    if(editing){
+      const idx=state.registers.findIndex(r=>r.id===editing.id);
+      state.registers[idx]=rec;
+    }else{
+      state.registers.push(rec);
+    }
+    save();await pdf(rec,c);alert(editing?"Register updated.":"Register saved.");go("documents");
   };
 }
 async function pdf(r,c){
   let {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),y=38;
   p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Daily Register",14,21);
-  p.setTextColor(32);p.setFontSize(8);p.text(`Class: ${r.className}`,14,35);p.text(`Date: ${dateUK(r.date)}`,100,35);p.text(`Subject: ${r.subject}`,170,35);
+  p.setTextColor(32);p.setFontSize(8);p.text(`Tutor: ${state.profile.name||"Not entered"}`,14,35);p.text(`Class: ${r.className}`,90,35);p.text(`Date: ${dateUK(r.date)}`,170,35);p.text(`Subject: ${r.subject}`,14,40);
   const periods=r.periods||[],left=14,nameW=45,perfW=30,sessionW=(269-nameW-perfW)/Math.max(periods.length,1);
-  y=42;p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
+  y=47;p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
   periods.forEach((per,i)=>p.text(`S${i+1} ${per.label}`,left+nameW+i*sessionW+2,y+7));
   p.text("Performance",left+nameW+periods.length*sessionW+2,y+7);y+=13;
   c.learners.forEach((l,i)=>{
@@ -219,7 +228,58 @@ async function learnerPdf(c,learner,from,to){
   p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"}`,14,66);let y=78;
   regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
 }
-function documents(){let regs=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date));app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Documents</h2></section><section class="card">${regs.length?regs.map(r=>`<div class="row"><div><b>${esc(r.className)} — ${dateUK(r.date)}</b><div class="small">${esc(r.subject)}</div></div><div class="buttons"><button class="secondary" data-dl="${r.id}">Download PDF</button><button class="danger" data-del="${r.id}">Delete</button></div></div>`).join(""):'<div class="empty">No documents yet.</div>'}</section>`;app.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{let r=state.registers.find(x=>x.id===b.dataset.dl),c=state.classes.find(x=>x.id===r.classId);pdf(r,c)});app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{if(confirm("Delete this register?")){state.registers=state.registers.filter(x=>x.id!==b.dataset.del);save();documents()}})}
+function documents(){
+  const classOptions=state.classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Documents</h2><p>Edit, download or delete saved registers.</p></section>
+  <section class="card"><div class="grid">
+    <label>Class
+      <select id="docClass"><option value="">All classes</option>${classOptions}</select>
+    </label>
+    <label>Month
+      <input id="docMonth" type="month">
+    </label>
+    <label>Exact date
+      <input id="docDate" type="date">
+    </label>
+  </div>
+  <div class="buttons"><button class="primary" id="applyDocFilters">Apply filters</button><button class="secondary" id="clearDocFilters">Clear filters</button></div>
+  </section>
+  <section class="card"><div id="docList"></div></section>`;
+
+  const draw=()=>{
+    let regs=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date));
+    if(docClass.value)regs=regs.filter(r=>r.classId===docClass.value);
+    if(docMonth.value)regs=regs.filter(r=>r.date.startsWith(docMonth.value));
+    if(docDate.value)regs=regs.filter(r=>r.date===docDate.value);
+
+    docList.innerHTML=regs.length?regs.map(r=>`<div class="row">
+      <div><b>${esc(r.className)} — ${dateUK(r.date)}</b><div class="small">${esc(r.subject)}</div></div>
+      <div class="buttons">
+        <button class="secondary" data-edit-reg="${r.id}">Edit</button>
+        <button class="secondary" data-dl="${r.id}">Download PDF</button>
+        <button class="danger" data-del="${r.id}">Delete</button>
+      </div>
+    </div>`).join(""):'<div class="empty">No registers match these filters.</div>';
+
+    docList.querySelectorAll("[data-edit-reg]").forEach(b=>b.onclick=()=>register(b.dataset.editReg));
+    docList.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{
+      const r=state.registers.find(x=>x.id===b.dataset.dl);
+      const c=state.classes.find(x=>x.id===r.classId);
+      pdf(r,c);
+    });
+    docList.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+      if(confirm("Delete this register?")){
+        state.registers=state.registers.filter(x=>x.id!==b.dataset.del);
+        save();
+        draw();
+      }
+    });
+  };
+
+  draw();
+  applyDocFilters.onclick=draw;
+  clearDocFilters.onclick=()=>{docClass.value="";docMonth.value="";docDate.value="";draw()};
+}
 function settings(){app.innerHTML=`<section class="card hero"><span class="eyebrow">TUTOR PROFILE</span><h2>Settings</h2></section><section class="card"><div class="grid"><label>Name<input id="pn" value="${esc(state.profile.name)}"></label><label>College/provider<input id="pc" value="${esc(state.profile.college)}"></label><label>Email<input id="pe" value="${esc(state.profile.email)}"></label></div><button class="primary" id="sp">Save profile</button></section><section class="card"><h3>Backup</h3><div class="buttons"><button class="secondary" id="ex">Export backup</button><label class="secondary" style="margin:0">Import backup<input id="im" type="file" accept=".json" style="display:none"></label></div></section><section class="card"><h3>Tutor Buddy</h3><p>Version ${state.version}</p><button class="danger" id="reset">Reset all data</button></section>`;sp.onclick=()=>{state.profile={name:pn.value.trim(),college:pc.value.trim(),email:pe.value.trim()};save();alert("Profile saved.")};ex.onclick=()=>{let b=new Blob([JSON.stringify(state,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="Tutor-Buddy-Backup.json";a.click()};im.onchange=async()=>{try{state=JSON.parse(await im.files[0].text());save();render()}catch(e){alert("Invalid backup.")}};reset.onclick=()=>{if(confirm("Delete all classes and registers?")){localStorage.removeItem(KEY);state=structuredClone(blank);render()}}}
 if("serviceWorker"in navigator)addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js"));render();
 </script></body></html>
