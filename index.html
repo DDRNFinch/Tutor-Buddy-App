@@ -41,7 +41,7 @@ details summary{cursor:pointer;padding:10px 0}
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],diaryNotes:[],current:null,version:"1.0.12"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],diaryNotes:[],current:null,version:"1.0.13"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📈 Progress Tracker"],["documents","📂 Records"],["settings","⚙️ Settings"]];
@@ -149,14 +149,29 @@ function learnerIssueSummary(classId,learnerId){
   const from=fourWeeksAgo(),to=new Date().toISOString().slice(0,10);
   const s=stats(classId,learnerId,from,to);
   const perf=averagePerformance(classId,learnerId,from,to);
-  const parts=[];
-  if(s.pct!==null&&s.pct<85)parts.push(`attendance has averaged ${s.pct}%`);
-  if(s.lateCount>=3)parts.push(`they have been late ${s.lateCount} times`);
-  if(perf==="Poor")parts.push("their average performance has been poor");
-  if(!parts.length)return null;
-  const description=`${l.name} has shown concern over the past 4 weeks: ${parts.join(", ")}.`;
-  return {classId,learnerId,learner:l.name,className:c.name,from,to,attendance:s.pct,lateCount:s.lateCount,performance:perf,description};
+  const issues=[];
+  if(s.pct!==null&&s.pct<85)issues.push("attendance");
+  if(s.lateCount>=3)issues.push("lateness");
+  if(perf==="Poor")issues.push("performance");
+  if(!issues.length)return null;
+
+  let description="";
+  if(issues.length>1){
+    const detail=[];
+    if(issues.includes("attendance"))detail.push(`attendance has averaged ${s.pct}%`);
+    if(issues.includes("lateness"))detail.push(`${s.lateCount} late arrivals have been recorded`);
+    if(issues.includes("performance"))detail.push("performance has been mostly Poor");
+    description=`${l.name} has shown a combination of concerns over the past 4 weeks: ${detail.join(", ")}. A structured improvement plan and regular support are recommended.`;
+  }else if(issues[0]==="attendance"){
+    description=`${l.name} has averaged ${s.pct}% attendance over the past 4 weeks. Improving attendance should now be prioritised to help them keep up with practical and theory work.`;
+  }else if(issues[0]==="lateness"){
+    description=`${l.name} has been consistently late over the past 4 weeks, with ${s.lateCount} recorded late arrivals. Punctuality should now be discussed to prevent this becoming a longer-term pattern.`;
+  }else{
+    description=`${l.name} has received mostly Poor performance ratings over the past 4 weeks. Additional support, clearer expectations and regular feedback may help improve engagement and classroom performance.`;
+  }
+  return {classId,learnerId,learner:l.name,className:c.name,from,to,attendance:s.pct,lateCount:s.lateCount,performance:perf,issues,description};
 }
+
 function fourWeekAttention(){
   const items=[];
   state.classes.forEach(c=>c.learners.forEach(l=>{
@@ -257,7 +272,7 @@ function home(){
 
 
   <section class="card">
-    <h3>Needs attention</h3>
+    <h3>🤝 Learners to Support</h3>
     <p class="small">Summaries are based on the learner's most recent 4 weeks of registers.</p>
     ${attention.length?attention.map(x=>`<div class="row">
       <div>
@@ -265,7 +280,7 @@ function home(){
         <div class="small">${esc(x.className)}</div>
         <p style="margin:6px 0 0">${esc(x.description)}</p>
       </div>
-      <button class="secondary" data-generate-concern="${x.classId}|${x.learnerId}">Generate report</button>
+      <button class="secondary" data-generate-concern="${x.classId}|${x.learnerId}">Generate Learner Support Report</button>
     </div>`).join(""):'<div class="empty">No learners currently flagged.</div>'}
   </section>
 
@@ -456,20 +471,15 @@ function register(editId=null,copyId=null){
 }
 async function pdf(r,c){
   let {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),y=38;
-  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");
-  p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,12);
-  p.setFontSize(11);p.text("Daily Register",14,21);
+  addPdfHeader(p,"Daily Class Register",r.className);
 
-  p.setTextColor(32);p.setFontSize(8);
-  p.text(`Tutor: ${state.profile.name||"Not entered"}`,14,35);
-  p.text(`Class: ${r.className}`,90,35);
-  p.text(`Date: ${dateUK(r.date)}`,170,35);
-  p.text(`Subject: ${r.subject}`,14,40);
+  p.setTextColor(32);p.setFontSize(8);p.text(`Subject: ${r.subject}`,14,36);
+  addPdfInfoPanel(p,[["Tutor",state.profile.name||"Not entered"],["College",state.profile.college||"Not entered"],["Generated",pdfGeneratedDate()],["Date",dateUK(r.date)]],215,30,68);
 
   const periods=r.periods||[],left=14,nameW=38,lateW=16,perfW=25;
   const sessionW=(269-nameW-lateW-perfW)/Math.max(periods.length,1);
 
-  y=47;
+  y=50;
   p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");
   p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
   periods.forEach((per,i)=>p.text(`S${i+1} ${per.label}`,left+nameW+i*sessionW+2,y+7));
@@ -496,7 +506,7 @@ async function pdf(r,c){
     y+=6;p.setFont("helvetica","bold");p.text("Notes for today",14,y);
     y+=5;p.setFont("helvetica","normal");p.text(p.splitTextToSize(r.notes,269),14,y);
   }
-  p.save(`${r.className}-${r.date}-Register.pdf`);
+  addPdfFooters(p,false);p.save(`${r.className}-${r.date}-Daily-Class-Register.pdf`);
 }
 function tracker(){
   if(!state.classes.length){app.innerHTML='<section class="card"><div class="empty">Create a class first.</div></section>';return}
@@ -519,72 +529,106 @@ function learnerReport(classId,learnerId,from,to){
 }
 async function trackerPdf(c,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
-  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text(`Lesson Tracker — ${c.name}`,14,21);p.setTextColor(32);p.setFontSize(8);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,35);
+  addPdfHeader(p,"Learner Progress Summary",c.name);p.setTextColor(32);p.setFontSize(8);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,35);addPdfInfoPanel(p,[["Tutor",state.profile.name||"Not entered"],["College",state.profile.college||"Not entered"],["Generated",pdfGeneratedDate()],["Period",`${dateUK(from)} – ${dateUK(to)}`]],215,30,68);
   let y=43,left=14,learnerW=50,lessonW=Math.max(25,(269-learnerW)/Math.max(regs.length,1));p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);regs.forEach((r,i)=>p.text(p.splitTextToSize(`${r.subject}\n${dateUK(r.date)}`,lessonW-3),left+learnerW+i*lessonW+1,y+5));y+=13;
-  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"} • L×${overall.lateCount}\n${averagePerformance(c.id,l.id,from,to)}`,learnerW-3),left+2,y+4);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"} L×${dailyLateCount(r,l.id)}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
+  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"} • L×${overall.lateCount}\n${averagePerformance(c.id,l.id,from,to)}`,learnerW-3),left+2,y+4);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"} L×${dailyLateCount(r,l.id)}`,left+learnerW+j*lessonW+2,y+8)});y+=14});addPdfFooters(p,false);p.save(`${c.name}-${from}-to-${to}-Learner-Progress-Summary.pdf`);
 }
 async function learnerPdf(c,learner,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(c.id,learner.id,from,to);
-  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"} • Total lateness: L×${s.lateCount}`,14,66);p.setFontSize(10);p.text(`Average performance: ${averagePerformance(c.id,learner.id,from,to)}`,14,73);let y=84;
-  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
+  addPdfHeader(p,"Learner Progress Report",learner.name);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);addPdfInfoPanel(p,[["Tutor",state.profile.name||"Not entered"],["College",state.profile.college||"Not entered"],["Generated",pdfGeneratedDate()],["Period",`${dateUK(from)} – ${dateUK(to)}`]],128,30,68);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"} • Total lateness: L×${s.lateCount}`,14,66);p.setFontSize(10);p.text(`Average performance: ${averagePerformance(c.id,learner.id,from,to)}`,14,73);let y=84;
+  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});addPdfFooters(p,true);p.save(`${learner.name}-${from}-to-${to}-Learner-Progress-Report.pdf`);
+}
+
+function pdfGeneratedDate(){return new Date().toLocaleDateString("en-GB");}
+function addPdfHeader(pdf,title,subtitle=""){
+  const w=pdf.internal.pageSize.getWidth();
+  pdf.setFillColor(49,92,155);pdf.rect(0,0,w,26,"F");
+  pdf.setTextColor(255);pdf.setFont("helvetica","bold");pdf.setFontSize(17);pdf.text(title,14,11);
+  if(subtitle){pdf.setFont("helvetica","normal");pdf.setFontSize(10);pdf.text(subtitle,14,19);}
+  pdf.setTextColor(32);
+}
+function addPdfInfoPanel(pdf,items,x,y,w){
+  pdf.setFillColor(242,246,251);pdf.roundedRect(x,y,w,28,2,2,"F");
+  pdf.setFontSize(7.5);let yy=y+6;
+  items.forEach(([label,value])=>{
+    pdf.setFont("helvetica","bold");pdf.text(`${label}:`,x+4,yy);
+    pdf.setFont("helvetica","normal");pdf.text(pdf.splitTextToSize(String(value||"Not entered"),w-27),x+23,yy);
+    yy+=6;
+  });
+}
+function addPdfFooters(pdf,confidential=false){
+  const pages=pdf.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    pdf.setPage(i);
+    const w=pdf.internal.pageSize.getWidth(),h=pdf.internal.pageSize.getHeight();
+    pdf.setDrawColor(210,214,220);pdf.line(14,h-12,w-14,h-12);
+    pdf.setFont("helvetica","normal");pdf.setFontSize(7);pdf.setTextColor(100);
+    pdf.text(confidential?"Confidential – Intended for the learner, employer and authorised college staff only.":"Generated by Tutor Buddy",14,h-7);
+    pdf.text(`Generated ${pdfGeneratedDate()} • Page ${i} of ${pages}`,w-14,h-7,{align:"right"});
+  }
+}
+function smartActionForIssue(issue){
+  if(!issue)return "Work with the tutor to agree a clear and achievable improvement plan.";
+  if(issue.issues.length>1)return "Create a weekly improvement plan covering attendance, punctuality and classroom engagement, supported by regular tutor feedback.";
+  if(issue.issues.includes("attendance"))return "Attend every scheduled lesson over the next 4 weeks and notify the tutor promptly if an absence is unavoidable.";
+  if(issue.issues.includes("lateness"))return "Arrive at least 10 minutes before each lesson with all required PPE, tools and learning materials ready.";
+  return "Improve lesson engagement by completing all activities, asking questions when unsure and maintaining focus throughout each session.";
 }
 
 async function concernPdf(classId,learnerId){
-  const c=state.classes.find(x=>x.id===classId);
-  const l=c?.learners.find(x=>x.id===learnerId);
+  const c=state.classes.find(x=>x.id===classId),l=c?.learners.find(x=>x.id===learnerId);
   if(!c||!l)return;
   const from=fourWeeksAgo(),to=new Date().toISOString().slice(0,10);
   const regs=state.registers.filter(r=>r.classId===classId&&r.date>=from&&r.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
-  const s=stats(classId,learnerId,from,to);
-  const perf=averagePerformance(classId,learnerId,from,to);
+  const s=stats(classId,learnerId,from,to),perf=averagePerformance(classId,learnerId,from,to),issue=learnerIssueSummary(classId,learnerId);
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"});
 
-  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");
-  p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);
-  p.setFontSize(11);p.text("Learner Attendance and Performance Report",14,21);
+  addPdfHeader(p,"Learner Support Report","Four-week attendance, punctuality and performance review");
+  addPdfInfoPanel(p,[["Tutor",state.profile.name||"Not entered"],["College",state.profile.college||"Not entered"],["Generated",pdfGeneratedDate()],["Period",`${dateUK(from)} – ${dateUK(to)}`]],128,30,68);
 
-  p.setTextColor(32);p.setFontSize(9);
-  p.text(`Learner: ${l.name}`,14,38);
-  p.text(`Class: ${c.name}`,14,46);
-  p.text(`Tutor: ${state.profile.name||"Not entered"}`,14,54);
-  p.text(`Period reviewed: ${dateUK(from)} to ${dateUK(to)}`,14,62);
+  p.setFont("helvetica","bold");p.setFontSize(9);
+  p.text(`Learner: ${l.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Course: ${c.course||"Not entered"}`,14,54);
+  p.setFillColor(239,244,250);p.roundedRect(14,66,182,23,3,3,"F");
+  p.setFontSize(11);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"}`,20,78);p.text(`Lateness: L×${s.lateCount}`,80,78);p.text(`Performance: ${perf}`,135,78);
 
-  p.setFont("helvetica","bold");p.setFontSize(13);
-  p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"}`,14,76);
-  p.text(`Lateness: L×${s.lateCount}`,80,76);
-  p.text(`Performance: ${perf}`,135,76);
-
-  let y=90;
-  p.setFontSize(10);p.text("Summary",14,y);y+=6;
+  let y=101;
+  p.setFontSize(11);p.text("Summary",14,y);y+=7;
   p.setFont("helvetica","normal");p.setFontSize(9);
-  const issue=learnerIssueSummary(classId,learnerId);
-  const summary=issue?.description||`${l.name} has no current attendance or performance concerns in the last 4 weeks.`;
-  const summaryLines=p.splitTextToSize(summary,182);
-  p.text(summaryLines,14,y);y+=summaryLines.length*5+8;
+  const summary=p.splitTextToSize(issue?.description||`${l.name} has no current attendance or performance concerns in the last 4 weeks.`,182);
+  p.text(summary,14,y);y+=summary.length*5+10;
 
-  p.setFont("helvetica","bold");p.text("Session history",14,y);y+=7;
-  p.setFont("helvetica","normal");p.setFontSize(8);
+  p.setFont("helvetica","bold");p.setFontSize(11);p.text("Complete register history",14,y);y+=7;
+  const x=[14,32,88,111,132,158],width=[18,56,23,21,26,38];
+  const tableHeader=()=>{
+    p.setFillColor(49,92,155);p.rect(14,y,182,10,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(7.5);
+    ["Date","Subject","Attendance","Late","Performance","Tutor notes"].forEach((h,i)=>p.text(h,x[i]+2,y+6));
+    p.setTextColor(32);y+=10;
+  };
+  tableHeader();
+
   regs.forEach((r,i)=>{
-    const pct=dayPercentage(r,learnerId),late=dailyLateCount(r,learnerId),performance=r.attendance[learnerId]?.performance||"Not recorded";
-    const lines=p.splitTextToSize(`${dateUK(r.date)} — ${r.subject}\nAttendance ${pct===null?"—":pct+"%"} • L×${late} • Performance ${performance}`,178);
-    const h=lines.length*4+7;
-    if(y+h>278){p.addPage();y=20}
-    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");
-    p.text(lines,18,y+2);y+=h+4;
+    const vals=[dateUK(r.date),r.subject,`${dayPercentage(r,learnerId)??"—"}${dayPercentage(r,learnerId)!==null?"%":""}`,`L×${dailyLateCount(r,learnerId)}`,r.attendance[learnerId]?.performance||"Not recorded",r.notes||"—"];
+    const wrapped=vals.map((v,j)=>p.splitTextToSize(String(v),width[j]-4));
+    const rowH=Math.max(9,Math.max(...wrapped.map(v=>v.length))*4+4);
+    if(y+rowH>275){p.addPage();y=22;tableHeader();}
+    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(14,y,182,rowH,"F");
+    p.setFont("helvetica","normal");p.setFontSize(7.2);wrapped.forEach((v,j)=>p.text(v,x[j]+2,y+5));y+=rowH;
   });
+  if(!regs.length){p.setFont("helvetica","normal");p.setFontSize(9);p.text("No registers were recorded during this 4-week period.",14,y+6);y+=14;}
 
-  if(y>240){p.addPage();y=20}
-  p.setFont("helvetica","bold");p.setFontSize(10);p.text("Suggested next actions",14,y);y+=7;
+  if(y>238){p.addPage();y=24;}
+  p.setFont("helvetica","bold");p.setFontSize(11);p.text("Suggested next actions",14,y);y+=8;
   p.setFont("helvetica","normal");p.setFontSize(9);
-  const actions=[
+  [
     "Discuss the pattern with the learner and agree a clear improvement target.",
-    "Share this report with the employer where appropriate.",
+    smartActionForIssue(issue),
     "Review progress again after the next 4 weeks."
-  ];
-  actions.forEach((a,i)=>{p.text(`${i+1}. ${a}`,14,y);y+=6});
+  ].forEach((a,i)=>{const lines=p.splitTextToSize(`${i+1}. ${a}`,178);p.text(lines,14,y);y+=lines.length*5+3;});
 
-  p.save(`${l.name}-${from}-to-${to}-Concern-Report.pdf`);
+  addPdfFooters(p,true);
+  p.save(`${l.name}-${from}-to-${to}-Learner-Support-Report.pdf`);
 }
+
 function documents(){
   app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Records</h2><p>Completed registers grouped by class and month.</p></section>
   <section class="card"><div class="grid">
