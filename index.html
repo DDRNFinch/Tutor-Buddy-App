@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#315c9b"><title>Tutor Buddy</title><link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 :root{--b:#315c9b;--bd:#203f70;--bg:#f4f6f9;--c:#fff;--t:#202630;--m:#6d7680;--l:#d9dee5;--g:#16845b;--a:#d79b21;--r:#a92323}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font-family:Arial,sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}
@@ -36,7 +37,7 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.5"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.6"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
@@ -59,7 +60,134 @@ function stats(cid,lid,from="",to=""){
   const values=regs.map(r=>dayPercentage(r,lid)).filter(v=>v!==null);
   return {pct:values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):null,totalDays:values.length};
 }
-function home(){let recent=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5),learners=state.classes.reduce((n,c)=>n+c.learners.length,0);app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY TUTOR TOOLKIT</span><h2>Welcome${state.profile.name?", "+esc(state.profile.name):""}</h2><p>Create registers, track attendance and see which learners attended each subject.</p></section><section class="grid3"><div class="metric"><span>Classes</span><strong>${state.classes.length}</strong></div><div class="metric"><span>Learners</span><strong>${learners}</strong></div><div class="metric"><span>Registers</span><strong>${state.registers.length}</strong></div></section><section class="actions"><button data-route="register">✅<b>Create today's register</b><span class="small">Date, times, subject and attendance.</span></button><button data-route="classes">👥<b>Manage classes</b><span class="small">Add new learners at any time.</span></button><button data-route="tracker">📊<b>Lesson tracker</b><span class="small">Attendance percentages and missed subjects.</span></button></section><section class="card"><h3>Recent registers</h3>${recent.length?recent.map(r=>`<div class="row"><div><b>${esc(r.className)}</b><div class="small">${dateUK(r.date)} • ${esc(r.subject)}</div></div><span class="badge grey">${Object.values(r.attendance).filter(x=>Object.values(x.periods||{}).some(p=>["Present","Late"].includes(p.status))).length}/${Object.keys(r.attendance).length}</span></div>`).join(""):'<div class="empty">No registers saved yet.</div>'}</section>`}
+
+function classDashboardStats(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  const regs=state.registers.filter(r=>r.classId===classId);
+  if(!c||!regs.length)return {attendance:null,lateness:null,performance:null,registers:0};
+
+  const attendanceValues=[];
+  let lateSessions=0,totalSessions=0;
+  let perfPoints=0,perfCount=0;
+  const perfMap={Excellent:100,Average:65,Poor:30};
+
+  c.learners.forEach(l=>{
+    const s=stats(classId,l.id);
+    if(s.pct!==null)attendanceValues.push(s.pct);
+  });
+
+  regs.forEach(r=>{
+    c.learners.forEach(l=>{
+      const periods=Object.values(r.attendance[l.id]?.periods||{});
+      periods.forEach(p=>{
+        totalSessions++;
+        if(p.status==="Late")lateSessions++;
+      });
+      const perf=r.attendance[l.id]?.performance;
+      if(perfMap[perf]!==undefined){
+        perfPoints+=perfMap[perf];
+        perfCount++;
+      }
+    });
+  });
+
+  return {
+    attendance:attendanceValues.length?Math.round(attendanceValues.reduce((a,b)=>a+b,0)/attendanceValues.length):null,
+    lateness:totalSessions?Math.round((lateSessions/totalSessions)*100):null,
+    performance:perfCount?Math.round(perfPoints/perfCount):null,
+    registers:regs.length
+  };
+}
+function overallDashboardStats(){
+  const rows=state.classes.map(c=>classDashboardStats(c.id)).filter(x=>x.registers>0);
+  const avg=key=>{
+    const vals=rows.map(x=>x[key]).filter(v=>v!==null);
+    return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
+  };
+  return {attendance:avg("attendance"),lateness:avg("lateness"),performance:avg("performance")};
+}
+let homeChart=null;
+function openClassDashboard(classId){
+  state.current=classId;
+  save();
+  go("tracker");
+}
+function home(){
+  const recent=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5);
+  const learners=state.classes.reduce((n,c)=>n+c.learners.length,0);
+  const overall=overallDashboardStats();
+
+  app.innerHTML=`<section class="card hero">
+    <span class="eyebrow">DAILY TUTOR TOOLKIT</span>
+    <h2>Welcome${state.profile.name?", "+esc(state.profile.name):""}</h2>
+    <p>Create registers, compare class performance and track lesson attendance.</p>
+  </section>
+
+  <section class="grid3">
+    <div class="metric"><span>Overall attendance</span><strong>${overall.attendance===null?"—":overall.attendance+"%"}</strong></div>
+    <div class="metric"><span>Overall lateness</span><strong>${overall.lateness===null?"—":overall.lateness+"%"}</strong></div>
+    <div class="metric"><span>Overall performance</span><strong>${overall.performance===null?"—":overall.performance+"%"}</strong></div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="border:0;padding-top:0">
+      <div><h3 style="margin-bottom:4px">Class comparison</h3><div class="small">Attendance, lateness and average performance across all saved classes.</div></div>
+    </div>
+    ${state.classes.length?'<div style="height:340px"><canvas id="classComparisonChart"></canvas></div>':'<div class="empty">Create a class and save registers to see comparisons.</div>'}
+    <p class="small">Tap a class bar or class card to open its lesson tracker.</p>
+  </section>
+
+  <section class="actions">
+    ${state.classes.map(c=>{const d=classDashboardStats(c.id);return `<button data-class-dashboard="${c.id}">
+      📊<b>${esc(c.name)}</b>
+      <span class="small">Attendance ${d.attendance===null?"—":d.attendance+"%"} • Late ${d.lateness===null?"—":d.lateness+"%"} • Performance ${d.performance===null?"—":d.performance+"%"}</span>
+    </button>`}).join("")}
+  </section>
+
+  <section class="actions">
+    <button data-route="register">✅<b>Create today's register</b><span class="small">Date, sessions, attendance and performance.</span></button>
+    <button data-route="classes">👥<b>Manage classes</b><span class="small">Add new learners at any time.</span></button>
+    <button data-route="tracker">📊<b>Lesson tracker</b><span class="small">Attendance percentages and lesson history.</span></button>
+  </section>
+
+  <section class="card"><h3>Recent registers</h3>
+    ${recent.length?recent.map(r=>`<div class="row"><div><b>${esc(r.className)}</b><div class="small">${dateUK(r.date)} • ${esc(r.subject)}</div></div><span class="badge grey">${Object.values(r.attendance).filter(x=>Object.values(x.periods||{}).some(p=>["Present","Late"].includes(p.status))).length}/${Object.keys(r.attendance).length}</span></div>`).join(""):'<div class="empty">No registers saved yet.</div>'}
+  </section>`;
+
+  app.querySelectorAll("[data-class-dashboard]").forEach(b=>b.onclick=()=>openClassDashboard(b.dataset.classDashboard));
+
+  if(state.classes.length && window.Chart){
+    const labels=state.classes.map(c=>c.name);
+    const attendance=state.classes.map(c=>classDashboardStats(c.id).attendance||0);
+    const lateness=state.classes.map(c=>classDashboardStats(c.id).lateness||0);
+    const performance=state.classes.map(c=>classDashboardStats(c.id).performance||0);
+
+    if(homeChart)homeChart.destroy();
+    homeChart=new Chart(document.getElementById("classComparisonChart"),{
+      type:"bar",
+      data:{
+        labels,
+        datasets:[
+          {label:"Attendance %",data:attendance},
+          {label:"Lateness %",data:lateness},
+          {label:"Performance %",data:performance}
+        ]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+"%"}}},
+        plugins:{legend:{position:"bottom"}},
+        onClick:(evt,elements)=>{
+          if(!elements.length)return;
+          const index=elements[0].index;
+          const classId=state.classes[index]?.id;
+          if(classId)openClassDashboard(classId);
+        }
+      }
+    });
+  }
+}
 function classes(){app.innerHTML=`<section class="card hero"><span class="eyebrow">CLASS SETUP</span><h2>Classes</h2><p>Create a class with usual times, then add learners.</p></section><section class="card"><button class="primary" id="newClass">+ Create class</button></section><section class="card"><h3>Your classes</h3><div id="list"></div></section>`;drawClasses();newClass.onclick=()=>classForm()}
 function drawClasses(){list.innerHTML=state.classes.length?state.classes.map(c=>`<div class="row"><div><b>${esc(c.name)}</b><div class="small">${c.learners.length} learners • ${c.start}-${c.end} • ${c.breaks?.length||0} break${(c.breaks?.length||0)===1?"":"s"}</div></div><div class="buttons"><button class="secondary" data-edit="${c.id}">Edit</button><button class="primary" data-use="${c.id}">Use</button></div></div>`).join(""):'<div class="empty">No classes created.</div>';list.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>classForm(b.dataset.edit));list.querySelectorAll("[data-use]").forEach(b=>b.onclick=()=>{state.current=b.dataset.use;save();go("register")})}
 function classForm(cid){
