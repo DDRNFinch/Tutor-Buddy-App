@@ -37,12 +37,40 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.6"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.7"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
-function go(x){route=x;render()}document.addEventListener("click",e=>{let b=e.target.closest("[data-route]");if(b)go(b.dataset.route)});mnav.onchange=()=>go(mnav.value);
-function render(){nav.innerHTML=R.map(([k,l])=>`<button data-route="${k}" class="${route===k?"active":""}">${l}</button>`).join("");mnav.innerHTML=R.map(([k,l])=>`<option value="${k}" ${route===k?"selected":""}>${l}</option>`).join("");({home,classes,register,tracker,documents,settings}[route]||home)()}
+function go(x){route=x;render()}document.addEventListener("click",e=>{
+  const install=e.target.closest("[data-install-app]");
+  if(install){installTutorBuddy();return}
+  const b=e.target.closest("[data-route]");
+  if(b)go(b.dataset.route);
+});mnav.onchange=()=>go(mnav.value);
+
+let deferredInstallPrompt=null;
+window.addEventListener("beforeinstallprompt",e=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  document.querySelectorAll("[data-install-app]").forEach(b=>b.classList.remove("hidden"));
+});
+window.addEventListener("appinstalled",()=>{
+  deferredInstallPrompt=null;
+  document.querySelectorAll("[data-install-app]").forEach(b=>b.classList.add("hidden"));
+});
+function isInstalledApp(){
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
+}
+async function installTutorBuddy(){
+  if(isInstalledApp()){alert("Tutor Buddy is already installed.");return;}
+  if(deferredInstallPrompt){deferredInstallPrompt.prompt();await deferredInstallPrompt.userChoice;deferredInstallPrompt=null;return;}
+  if(/iphone|ipad|ipod/i.test(navigator.userAgent)){alert("Open Tutor Buddy in Safari, tap Share, then choose Add to Home Screen.");}
+  else{alert("Open the browser menu and choose Install app or Add to Home screen.");}
+}
+
+function render(){nav.innerHTML=R.map(([k,l])=>`<button data-route="${k}" class="${route===k?"active":""}">${l}</button>`).join("");mnav.innerHTML=R.map(([k,l])=>`<option value="${k}" ${route===k?"selected":""}>${l}</option>`).join("");({home,classes,register,tracker,documents,settings}[route]||home)();
+  if(isInstalledApp())document.querySelectorAll("[data-install-app]").forEach(b=>b.classList.add("hidden"));
+}
 function cls(){return state.classes.find(x=>x.id===state.current)||state.classes[0]||null}
 function dayPercentage(record,learnerId){
   const periods=Object.values(record.attendance[learnerId]?.periods||{});
@@ -137,7 +165,7 @@ function home(){
     <p class="small">Tap a class bar or class card to open its lesson tracker.</p>
   </section>
 
-  <section class="actions">
+  <section class="card"><div class="row" style="border:0;padding:0"><div><h3 style="margin-bottom:4px">Install Tutor Buddy</h3><div class="small">Add Tutor Buddy to your phone, tablet or computer like a normal app.</div></div><button class="primary" data-install-app>Install App</button></div></section><section class="actions">
     ${state.classes.map(c=>{const d=classDashboardStats(c.id);return `<button data-class-dashboard="${c.id}">
       📊<b>${esc(c.name)}</b>
       <span class="small">Attendance ${d.attendance===null?"—":d.attendance+"%"} • Late ${d.lateness===null?"—":d.lateness+"%"} • Performance ${d.performance===null?"—":d.performance+"%"}</span>
