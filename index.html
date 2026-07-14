@@ -34,13 +34,17 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 .tick-line{display:flex;align-items:center;gap:6px;margin:4px 0;font-weight:600}
 .tick-line input{width:auto;margin:0}
 
+
+.status-stack{display:flex;gap:6px;flex-wrap:wrap}
+details summary{cursor:pointer;padding:10px 0}
+
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.9"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],diaryNotes:[],current:null,version:"1.0.10"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
-function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
+function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📈 Progress Tracker"],["documents","📂 Records"],["settings","⚙️ Settings"]];
 function go(x){route=x;render()}document.addEventListener("click",e=>{
   const install=e.target.closest("[data-install-app]");
   if(install){installTutorBuddy();return}
@@ -108,6 +112,47 @@ function averageRag(classId,learnerId,from="",to=""){
 }
 function ragClass(v){return v==="Green"?"green":v==="Amber"?"amber":v==="Red"?"red":"grey";}
 
+function classAverageRag(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  if(!c||!c.learners.length)return "Not recorded";
+  const map={Red:1,Amber:2,Green:3};
+  const vals=c.learners.map(l=>map[averageRag(classId,l.id)]).filter(v=>v);
+  if(!vals.length)return "Not recorded";
+  const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  return avg>=2.5?"Green":avg>=1.5?"Amber":"Red";
+}
+function classAveragePerformanceLabel(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  if(!c||!c.learners.length)return "Not recorded";
+  const map={Poor:1,Average:2,Excellent:3};
+  const vals=c.learners.map(l=>map[averagePerformance(classId,l.id)]).filter(v=>v);
+  if(!vals.length)return "Not recorded";
+  const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  return avg>=2.5?"Excellent":avg>=1.5?"Average":"Poor";
+}
+function performanceClass(v){return v==="Excellent"?"green":v==="Average"?"amber":v==="Poor"?"red":"grey";}
+function needsAttention(){
+  const items=[];
+  state.classes.forEach(c=>{
+    c.learners.forEach(l=>{
+      const s=stats(c.id,l.id);
+      const perf=averagePerformance(c.id,l.id);
+      const rag=averageRag(c.id,l.id);
+      if(s.pct!==null&&s.pct<85)items.push({learner:l.name,className:c.name,reason:`Attendance ${s.pct}%`,priority:1});
+      if(rag==="Red")items.push({learner:l.name,className:c.name,reason:"Average RAG Red",priority:1});
+      if(s.lateCount>=5)items.push({learner:l.name,className:c.name,reason:`L×${s.lateCount}`,priority:2});
+      if(perf==="Poor")items.push({learner:l.name,className:c.name,reason:"Performance Poor",priority:1});
+    });
+  });
+  return items.sort((a,b)=>a.priority-b.priority||a.learner.localeCompare(b.learner)).slice(0,12);
+}
+function latestRegisterForClass(classId){
+  return [...state.registers].filter(r=>r.classId===classId).sort((a,b)=>b.date.localeCompare(a.date))[0]||null;
+}
+function openClassSummary(classId){
+  state.current=classId;save();classSummary(classId);
+}
+
 function classDashboardStats(classId){
   const c=state.classes.find(x=>x.id===classId);
   const regs=state.registers.filter(r=>r.classId===classId);
@@ -163,77 +208,103 @@ function home(){
   const recent=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5);
   const learners=state.classes.reduce((n,c)=>n+c.learners.length,0);
   const overall=overallDashboardStats();
+  const attention=needsAttention();
+  const today=new Date().toISOString().slice(0,10);
+  const diary=(state.diaryNotes||[]).filter(n=>n.date===today);
 
   app.innerHTML=`<section class="card hero">
     <span class="eyebrow">DAILY TUTOR TOOLKIT</span>
     <h2>Welcome${state.profile.name?", "+esc(state.profile.name):""}</h2>
-    <p>Create registers, compare class performance and track lesson attendance.</p>
+    <p>Your classes, attendance, learner performance and daily records in one place.</p>
   </section>
 
   <section class="grid3">
     <div class="metric"><span>Overall attendance</span><strong>${overall.attendance===null?"—":overall.attendance+"%"}</strong></div>
-    <div class="metric"><span>Overall lateness</span><strong>${overall.lateness===null?"—":overall.lateness+"%"}</strong></div>
-    <div class="metric"><span>Overall performance</span><strong>${overall.performance===null?"—":overall.performance+"%"}</strong></div>
+    <div class="metric"><span>Overall lateness</span><strong>${overall.lateness===null?"—":"L×"+state.classes.reduce((n,c)=>n+c.learners.reduce((m,l)=>m+stats(c.id,l.id).lateCount,0),0)}</strong></div>
+    <div class="metric"><span>Classes / Learners</span><strong>${state.classes.length} / ${learners}</strong></div>
   </section>
 
   <section class="card">
-    <div class="row" style="border:0;padding-top:0">
-      <div><h3 style="margin-bottom:4px">Class comparison</h3><div class="small">Attendance, late-session rate and average performance across all saved classes.</div></div>
+    <h3>Quick actions</h3>
+    <div class="actions">
+      <button data-route="register">✅<b>New register</b><span class="small">Start a fresh daily register.</span></button>
+      <button id="copyPreviousHome">📋<b>Copy previous register</b><span class="small">Reuse the latest class and lesson details.</span></button>
+      <button data-route="tracker">📊<b>Progress tracker</b><span class="small">View learner attendance and progress.</span></button>
     </div>
-    ${state.classes.length?'<div style="height:340px"><canvas id="classComparisonChart"></canvas></div>':'<div class="empty">Create a class and save registers to see comparisons.</div>'}
-    <p class="small">Tap a class bar or class card to open its lesson tracker.</p>
   </section>
 
-  <section class="card"><div class="row" style="border:0;padding:0"><div><h3 style="margin-bottom:4px">Install Tutor Buddy</h3><div class="small">Add Tutor Buddy to your phone, tablet or computer like a normal app.</div></div><button class="primary" data-install-app>Install App</button></div></section><section class="actions">
-    ${state.classes.map(c=>{const d=classDashboardStats(c.id);return `<button data-class-dashboard="${c.id}">
-      📊<b>${esc(c.name)}</b>
-      <span class="small">Attendance ${d.attendance===null?"—":d.attendance+"%"} • Late ${d.lateness===null?"—":d.lateness+"%"} • Performance ${d.performance===null?"—":d.performance+"%"}</span>
-    </button>`}).join("")}
+  <section class="card">
+    <h3>Your classes</h3>
+    ${state.classes.length?`<div class="actions">${state.classes.map(c=>{
+      const d=classDashboardStats(c.id),rag=classAverageRag(c.id),perf=classAveragePerformanceLabel(c.id),last=latestRegisterForClass(c.id);
+      return `<button data-class-summary="${c.id}">
+        👥<b>${esc(c.name)}</b>
+        <span class="small">${c.learners.length} learners<br>Attendance ${d.attendance===null?"—":d.attendance+"%"} • Performance ${perf}<br>RAG ${rag} • Last register ${last?dateUK(last.date):"None"}</span>
+      </button>`;
+    }).join("")}</div>`:'<div class="empty">No classes created yet.</div>'}
   </section>
 
-  <section class="actions">
-    <button data-route="register">✅<b>Create today's register</b><span class="small">Date, sessions, attendance and performance.</span></button>
-    <button data-route="classes">👥<b>Manage classes</b><span class="small">Add new learners at any time.</span></button>
-    <button data-route="tracker">📊<b>Lesson tracker</b><span class="small">Attendance percentages and lesson history.</span></button>
+  <section class="card">
+    <h3>Needs attention</h3>
+    ${attention.length?attention.map(x=>`<div class="row"><div><b>${esc(x.learner)}</b><div class="small">${esc(x.className)}</div></div><span class="badge ${x.priority===1?"red":"amber"}">${esc(x.reason)}</span></div>`).join(""):'<div class="empty">No learners currently flagged.</div>'}
+  </section>
+
+  <section class="card">
+    <h3>Today's notes</h3>
+    <div class="grid">
+      <label>New note<input id="diaryText" placeholder="e.g. Order more timber, EPA mock next week"></label>
+      <label>Date<input id="diaryDate" type="date" value="${today}"></label>
+    </div>
+    <button class="primary" id="addDiary">Add note</button>
+    <div id="diaryList">${diary.length?diary.map(n=>`<div class="row"><div>${esc(n.text)}</div><button class="danger" data-delete-note="${n.id}">Delete</button></div>`).join(""):'<div class="empty">No notes for today.</div>'}</div>
   </section>
 
   <section class="card"><h3>Recent registers</h3>
-    ${recent.length?recent.map(r=>`<div class="row"><div><b>${esc(r.className)}</b><div class="small">${dateUK(r.date)} • ${esc(r.subject)}</div></div><span class="badge grey">${Object.values(r.attendance).filter(x=>Object.values(x.periods||{}).some(p=>["Present","Late"].includes(p.status))).length}/${Object.keys(r.attendance).length}</span></div>`).join(""):'<div class="empty">No registers saved yet.</div>'}
+    ${recent.length?recent.map(r=>`<div class="row"><div><b>${esc(r.className)}</b><div class="small">${dateUK(r.date)} • ${esc(r.subject)}</div></div><button class="secondary" data-edit-recent="${r.id}">Open</button></div>`).join(""):'<div class="empty">No registers saved yet.</div>'}
   </section>`;
 
-  app.querySelectorAll("[data-class-dashboard]").forEach(b=>b.onclick=()=>openClassDashboard(b.dataset.classDashboard));
+  app.querySelectorAll("[data-class-summary]").forEach(b=>b.onclick=()=>openClassSummary(b.dataset.classSummary));
+  app.querySelectorAll("[data-edit-recent]").forEach(b=>b.onclick=()=>register(b.dataset.editRecent));
+  copyPreviousHome.onclick=()=>copyPreviousRegister();
+  addDiary.onclick=()=>{
+    const text=diaryText.value.trim();if(!text)return;
+    state.diaryNotes ||= [];
+    state.diaryNotes.push({id:id("note"),date:diaryDate.value,text});
+    save();home();
+  };
+  app.querySelectorAll("[data-delete-note]").forEach(b=>b.onclick=()=>{
+    state.diaryNotes=state.diaryNotes.filter(n=>n.id!==b.dataset.deleteNote);save();home();
+  });
+}
 
-  if(state.classes.length && window.Chart){
-    const labels=state.classes.map(c=>c.name);
-    const attendance=state.classes.map(c=>classDashboardStats(c.id).attendance||0);
-    const lateness=state.classes.map(c=>classDashboardStats(c.id).lateness||0);
-    const performance=state.classes.map(c=>classDashboardStats(c.id).performance||0);
+function classSummary(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  if(!c){go("classes");return}
+  const d=classDashboardStats(classId);
+  const rag=classAverageRag(classId);
+  const perf=classAveragePerformanceLabel(classId);
+  const last=latestRegisterForClass(classId);
 
-    if(homeChart)homeChart.destroy();
-    homeChart=new Chart(document.getElementById("classComparisonChart"),{
-      type:"bar",
-      data:{
-        labels,
-        datasets:[
-          {label:"Attendance %",data:attendance},
-          {label:"Lateness %",data:lateness},
-          {label:"Performance %",data:performance}
-        ]
-      },
-      options:{
-        responsive:true,
-        maintainAspectRatio:false,
-        scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+"%"}}},
-        plugins:{legend:{position:"bottom"}},
-        onClick:(evt,elements)=>{
-          if(!elements.length)return;
-          const index=elements[0].index;
-          const classId=state.classes[index]?.id;
-          if(classId)openClassDashboard(classId);
-        }
-      }
-    });
-  }
+  app.innerHTML=`<section class="card"><button class="secondary" data-route="home">← Back to Home</button></section>
+  <section class="card hero"><span class="eyebrow">CLASS SUMMARY</span><h2>${esc(c.name)}</h2><p>${esc(c.course||"Course not entered")} • ${c.learners.length} learners</p></section>
+  <section class="grid3">
+    <div class="metric"><span>Attendance</span><strong>${d.attendance===null?"—":d.attendance+"%"}</strong></div>
+    <div class="metric"><span>Performance</span><strong style="font-size:18px">${perf}</strong></div>
+    <div class="metric"><span>Average RAG</span><strong style="font-size:18px">${rag}</strong></div>
+  </section>
+  <section class="card"><div class="actions">
+    <button id="classNewRegister">✅<b>New register</b><span class="small">Create today's register.</span></button>
+    <button id="classCopyRegister">📋<b>Copy previous</b><span class="small">${last?dateUK(last.date)+" • "+esc(last.subject):"No previous register"}</span></button>
+    <button id="classTracker">📊<b>View tracker</b><span class="small">Open learner progress.</span></button>
+  </div></section>
+  <section class="card"><h3>Learners</h3>${c.learners.map(l=>{
+    const s=stats(c.id,l.id),p=averagePerformance(c.id,l.id),r=averageRag(c.id,l.id);
+    return `<div class="row"><div><b>${esc(l.name)}</b><div class="small">Attendance ${s.pct===null?"—":s.pct+"%"} • L×${s.lateCount} • ${p}</div></div><span class="badge ${ragClass(r)}">${r}</span></div>`;
+  }).join("")||'<div class="empty">No learners added.</div>'}</section>`;
+
+  classNewRegister.onclick=()=>{state.current=c.id;save();register()};
+  classCopyRegister.onclick=()=>{state.current=c.id;save();copyPreviousRegister()};
+  classTracker.onclick=()=>{state.current=c.id;save();go("tracker")};
 }
 function classes(){app.innerHTML=`<section class="card hero"><span class="eyebrow">CLASS SETUP</span><h2>Classes</h2><p>Create a class with usual times, then add learners.</p></section><section class="card"><button class="primary" id="newClass">+ Create class</button></section><section class="card"><h3>Your classes</h3><div id="list"></div></section>`;drawClasses();newClass.onclick=()=>classForm()}
 function drawClasses(){list.innerHTML=state.classes.length?state.classes.map(c=>`<div class="row"><div><b>${esc(c.name)}</b><div class="small">${c.learners.length} learners • ${c.start}-${c.end} • ${c.breaks?.length||0} break${(c.breaks?.length||0)===1?"":"s"}</div></div><div class="buttons"><button class="secondary" data-edit="${c.id}">Edit</button><button class="primary" data-use="${c.id}">Use</button></div></div>`).join(""):'<div class="empty">No classes created.</div>';list.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>classForm(b.dataset.edit));list.querySelectorAll("[data-use]").forEach(b=>b.onclick=()=>{state.current=b.dataset.use;save();go("register")})}
@@ -292,19 +363,27 @@ function teachingPeriods(c){
   if(current<c.end)periods.push({id:`p${periods.length}`,start:current,end:c.end,label:`${current}–${c.end}`});
   return periods;
 }
-function register(editId=null){
+
+function copyPreviousRegister(){
+  if(!state.registers.length){alert("There is no previous register to copy.");return}
+  const preferred=state.current?latestRegisterForClass(state.current):null;
+  const previous=preferred||[...state.registers].sort((a,b)=>b.date.localeCompare(a.date))[0];
+  register(null,previous.id);
+}
+function register(editId=null,copyId=null){
   if(!state.classes.length){
     app.innerHTML=`<section class="card"><h2>Create a class first</h2><button class="primary" data-route="classes">Create class</button></section>`;
     return;
   }
   const editing=editId?state.registers.find(r=>r.id===editId):null;
-  let c=editing?state.classes.find(x=>x.id===editing.classId):cls();
+  const copying=copyId?state.registers.find(r=>r.id===copyId):null;
+  let c=(editing||copying)?state.classes.find(x=>x.id===(editing||copying).classId):cls();
   state.current=c.id;
-  app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY REGISTER</span><h2>${editing?"Edit":"Create"} Register</h2><p>Tick Present for each session. Tick Late where needed. Unticked Present means absent.</p></section>
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY REGISTER</span><h2>${editing?"Edit":copying?"Copy Previous":"Create"} Register</h2><p>Tick Present for each session. Tick Late where needed. Unticked Present means absent.</p></section>
   <section class="card"><div class="grid">
     <label>Class<select id="rc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>
     <label>Date<input id="rd" type="date" value="${editing?.date||new Date().toISOString().slice(0,10)}"></label>
-    <label>Subject covered<input id="rs" value="${esc(editing?.subject||"")}" placeholder="e.g. Installing floor joists"></label>
+    <label>Subject covered<input id="rs" value="${esc(editing?.subject||copying?.subject||"")}" placeholder="e.g. Installing floor joists"></label>
   </div></section>
   <section class="card"><div class="buttons"><button class="secondary" id="all">Mark all present</button><button class="secondary" id="none">Clear all</button></div><div id="rl" class="scroll"></div></section>
   <section class="card"><label>Notes for today<textarea id="rn" placeholder="Add any comments about the lesson, class or individual learners.">${esc(editing?.notes||"")}</textarea></label></section>
@@ -335,7 +414,7 @@ function register(editId=null){
     rl.querySelectorAll("[data-late]").forEach(ch=>ch.onchange=()=>{if(ch.checked)rl.querySelector(`[data-present="${ch.dataset.late}"]`).checked=true});
   };
   draw();
-  if(editing)rc.disabled=true;
+  if(editing||copying)rc.disabled=true;
   rc.onchange=()=>{state.current=rc.value;save();draw()};
   all.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=true);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
   none.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=false);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
@@ -435,22 +514,13 @@ async function learnerPdf(c,learner,from,to){
   regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}\nRAG: ${r.attendance[learner.id]?.rag||"Not recorded"}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
 }
 function documents(){
-  const classOptions=state.classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Documents</h2><p>Edit, download or delete saved registers.</p></section>
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Records</h2><p>Completed registers grouped by class and month.</p></section>
   <section class="card"><div class="grid">
-    <label>Class
-      <select id="docClass"><option value="">All classes</option>${classOptions}</select>
-    </label>
-    <label>Month
-      <input id="docMonth" type="month">
-    </label>
-    <label>Exact date
-      <input id="docDate" type="date">
-    </label>
-  </div>
-  <div class="buttons"><button class="primary" id="applyDocFilters">Apply filters</button><button class="secondary" id="clearDocFilters">Clear filters</button></div>
-  </section>
-  <section class="card"><div id="docList"></div></section>`;
+    <label>Class<select id="docClass"><option value="">All classes</option>${state.classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>
+    <label>Month<input id="docMonth" type="month"></label>
+    <label>Exact date<input id="docDate" type="date"></label>
+  </div><div class="buttons"><button class="primary" id="applyDocFilters">Apply filters</button><button class="secondary" id="clearDocFilters">Clear filters</button></div></section>
+  <section id="docList"></section>`;
 
   const draw=()=>{
     let regs=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date));
@@ -458,28 +528,24 @@ function documents(){
     if(docMonth.value)regs=regs.filter(r=>r.date.startsWith(docMonth.value));
     if(docDate.value)regs=regs.filter(r=>r.date===docDate.value);
 
-    docList.innerHTML=regs.length?regs.map(r=>`<div class="row">
-      <div><b>${esc(r.className)} — ${dateUK(r.date)}</b><div class="small">${esc(r.subject)}</div></div>
-      <div class="buttons">
-        <button class="secondary" data-edit-reg="${r.id}">Edit</button>
-        <button class="secondary" data-dl="${r.id}">Download PDF</button>
-        <button class="danger" data-del="${r.id}">Delete</button>
-      </div>
-    </div>`).join(""):'<div class="empty">No registers match these filters.</div>';
+    const grouped={};
+    regs.forEach(r=>{
+      const month=r.date.slice(0,7);
+      grouped[r.className] ||= {};
+      grouped[r.className][month] ||= [];
+      grouped[r.className][month].push(r);
+    });
+
+    docList.innerHTML=Object.keys(grouped).length?Object.entries(grouped).map(([className,months])=>`
+      <section class="card"><h3>📁 ${esc(className)}</h3>
+        ${Object.entries(months).map(([month,items])=>`<details open><summary><b>${new Date(month+"-01T12:00:00").toLocaleDateString("en-GB",{month:"long",year:"numeric"})}</b></summary>
+          ${items.map(r=>`<div class="row"><div><b>${dateUK(r.date)}</b><div class="small">${esc(r.subject)}</div></div><div class="buttons"><button class="secondary" data-edit-reg="${r.id}">Edit</button><button class="secondary" data-dl="${r.id}">Download PDF</button><button class="danger" data-del="${r.id}">Delete</button></div></div>`).join("")}
+        </details>`).join("")}
+      </section>`).join(""):'<section class="card"><div class="empty">No registers match these filters.</div></section>';
 
     docList.querySelectorAll("[data-edit-reg]").forEach(b=>b.onclick=()=>register(b.dataset.editReg));
-    docList.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{
-      const r=state.registers.find(x=>x.id===b.dataset.dl);
-      const c=state.classes.find(x=>x.id===r.classId);
-      pdf(r,c);
-    });
-    docList.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
-      if(confirm("Delete this register?")){
-        state.registers=state.registers.filter(x=>x.id!==b.dataset.del);
-        save();
-        draw();
-      }
-    });
+    docList.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{const r=state.registers.find(x=>x.id===b.dataset.dl),c=state.classes.find(x=>x.id===r.classId);pdf(r,c)});
+    docList.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{if(confirm("Delete this register?")){state.registers=state.registers.filter(x=>x.id!==b.dataset.del);save();draw()}});
   };
 
   draw();
