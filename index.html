@@ -41,7 +41,7 @@ details summary{cursor:pointer;padding:10px 0}
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],diaryNotes:[],current:null,version:"1.0.10"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],diaryNotes:[],current:null,version:"1.0.11"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📈 Progress Tracker"],["documents","📂 Records"],["settings","⚙️ Settings"]];
@@ -103,24 +103,6 @@ function averagePerformance(classId,learnerId,from="",to=""){
   const avg=values.reduce((a,b)=>a+b,0)/values.length;
   return avg>=2.5?"Excellent":avg>=1.5?"Average":"Poor";
 }
-function averageRag(classId,learnerId,from="",to=""){
-  const map={Red:1,Amber:2,Green:3};
-  const values=state.registers.filter(r=>r.classId===classId&&(!from||r.date>=from)&&(!to||r.date<=to)).map(r=>map[r.attendance[learnerId]?.rag]).filter(v=>v);
-  if(!values.length)return "Not recorded";
-  const avg=values.reduce((a,b)=>a+b,0)/values.length;
-  return avg>=2.5?"Green":avg>=1.5?"Amber":"Red";
-}
-function ragClass(v){return v==="Green"?"green":v==="Amber"?"amber":v==="Red"?"red":"grey";}
-
-function classAverageRag(classId){
-  const c=state.classes.find(x=>x.id===classId);
-  if(!c||!c.learners.length)return "Not recorded";
-  const map={Red:1,Amber:2,Green:3};
-  const vals=c.learners.map(l=>map[averageRag(classId,l.id)]).filter(v=>v);
-  if(!vals.length)return "Not recorded";
-  const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
-  return avg>=2.5?"Green":avg>=1.5?"Amber":"Red";
-}
 function classAveragePerformanceLabel(classId){
   const c=state.classes.find(x=>x.id===classId);
   if(!c||!c.learners.length)return "Not recorded";
@@ -137,9 +119,7 @@ function needsAttention(){
     c.learners.forEach(l=>{
       const s=stats(c.id,l.id);
       const perf=averagePerformance(c.id,l.id);
-      const rag=averageRag(c.id,l.id);
       if(s.pct!==null&&s.pct<85)items.push({learner:l.name,className:c.name,reason:`Attendance ${s.pct}%`,priority:1});
-      if(rag==="Red")items.push({learner:l.name,className:c.name,reason:"Average RAG Red",priority:1});
       if(s.lateCount>=5)items.push({learner:l.name,className:c.name,reason:`L×${s.lateCount}`,priority:2});
       if(perf==="Poor")items.push({learner:l.name,className:c.name,reason:"Performance Poor",priority:1});
     });
@@ -151,6 +131,35 @@ function latestRegisterForClass(classId){
 }
 function openClassSummary(classId){
   state.current=classId;save();classSummary(classId);
+}
+
+function lessonTrendRows(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  const regs=state.registers.filter(r=>r.classId===classId);
+  return regs.map(r=>{
+    let late=0,totalSessions=0,poor=0,perfCount=0;
+    c.learners.forEach(l=>{
+      const periods=Object.values(r.attendance[l.id]?.periods||{});
+      totalSessions+=periods.length;
+      late+=periods.filter(p=>p.status==="Late").length;
+      const perf=r.attendance[l.id]?.performance;
+      if(perf){perfCount++;if(perf==="Poor")poor++;}
+    });
+    return {
+      id:r.id,
+      subject:r.subject,
+      date:r.date,
+      lateRate:totalSessions?Math.round(late/totalSessions*100):0,
+      poorRate:perfCount?Math.round(poor/perfCount*100):0,
+      lateCount:late,
+      poorCount:poor
+    };
+  }).sort((a,b)=>(b.lateRate+b.poorRate)-(a.lateRate+a.poorRate));
+}
+function classLateCount(classId){
+  const c=state.classes.find(x=>x.id===classId);
+  if(!c)return 0;
+  return c.learners.reduce((n,l)=>n+stats(classId,l.id).lateCount,0);
 }
 
 function classDashboardStats(classId){
@@ -206,8 +215,6 @@ function openClassDashboard(classId){
 }
 function home(){
   const recent=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5);
-  const learners=state.classes.reduce((n,c)=>n+c.learners.length,0);
-  const overall=overallDashboardStats();
   const attention=needsAttention();
   const today=new Date().toISOString().slice(0,10);
   const diary=(state.diaryNotes||[]).filter(n=>n.date===today);
@@ -215,13 +222,7 @@ function home(){
   app.innerHTML=`<section class="card hero">
     <span class="eyebrow">DAILY TUTOR TOOLKIT</span>
     <h2>Welcome${state.profile.name?", "+esc(state.profile.name):""}</h2>
-    <p>Your classes, attendance, learner performance and daily records in one place.</p>
-  </section>
-
-  <section class="grid3">
-    <div class="metric"><span>Overall attendance</span><strong>${overall.attendance===null?"—":overall.attendance+"%"}</strong></div>
-    <div class="metric"><span>Overall lateness</span><strong>${overall.lateness===null?"—":"L×"+state.classes.reduce((n,c)=>n+c.learners.reduce((m,l)=>m+stats(c.id,l.id).lateCount,0),0)}</strong></div>
-    <div class="metric"><span>Classes / Learners</span><strong>${state.classes.length} / ${learners}</strong></div>
+    <p>Compare classes, spot learner concerns and identify lesson trends that may need a different delivery approach.</p>
   </section>
 
   <section class="card">
@@ -229,19 +230,42 @@ function home(){
     <div class="actions">
       <button data-route="register">✅<b>New register</b><span class="small">Start a fresh daily register.</span></button>
       <button id="copyPreviousHome">📋<b>Copy previous register</b><span class="small">Reuse the latest class and lesson details.</span></button>
-      <button data-route="tracker">📊<b>Progress tracker</b><span class="small">View learner attendance and progress.</span></button>
+      <button data-route="tracker">📊<b>Progress tracker</b><span class="small">View attendance, lateness and performance.</span></button>
     </div>
   </section>
 
   <section class="card">
-    <h3>Your classes</h3>
+    <h3>Class overview</h3>
     ${state.classes.length?`<div class="actions">${state.classes.map(c=>{
-      const d=classDashboardStats(c.id),rag=classAverageRag(c.id),perf=classAveragePerformanceLabel(c.id),last=latestRegisterForClass(c.id);
+      const d=classDashboardStats(c.id),perf=classAveragePerformanceLabel(c.id),last=latestRegisterForClass(c.id);
       return `<button data-class-summary="${c.id}">
         👥<b>${esc(c.name)}</b>
-        <span class="small">${c.learners.length} learners<br>Attendance ${d.attendance===null?"—":d.attendance+"%"} • Performance ${perf}<br>RAG ${rag} • Last register ${last?dateUK(last.date):"None"}</span>
+        <span class="small">
+          ${c.learners.length} learners<br>
+          Attendance ${d.attendance===null?"—":d.attendance+"%"}<br>
+          Late marks L×${classLateCount(c.id)}<br>
+          Performance ${perf}<br>
+          Last register ${last?dateUK(last.date):"None"}
+        </span>
       </button>`;
     }).join("")}</div>`:'<div class="empty">No classes created yet.</div>'}
+  </section>
+
+  <section class="card">
+    <h3>Lesson trends</h3>
+    ${state.classes.length?state.classes.map(c=>{
+      const trends=lessonTrendRows(c.id).filter(x=>x.lateRate>=20||x.poorRate>=30).slice(0,4);
+      return `<div style="margin-bottom:16px">
+        <b>${esc(c.name)}</b>
+        ${trends.length?trends.map(t=>`<div class="row">
+          <div><b>${esc(t.subject)}</b><div class="small">${dateUK(t.date)}</div></div>
+          <div class="status-stack">
+            ${t.lateRate>=20?`<span class="badge amber">Late ${t.lateRate}%</span>`:""}
+            ${t.poorRate>=30?`<span class="badge red">Poor behaviour ${t.poorRate}%</span>`:""}
+          </div>
+        </div>`).join(""):'<div class="small" style="padding:8px 0">No significant issues identified.</div>'}
+      </div>`;
+    }).join(""):'<div class="empty">No lesson data yet.</div>'}
   </section>
 
   <section class="card">
@@ -276,30 +300,32 @@ function home(){
     state.diaryNotes=state.diaryNotes.filter(n=>n.id!==b.dataset.deleteNote);save();home();
   });
 }
-
 function classSummary(classId){
   const c=state.classes.find(x=>x.id===classId);
   if(!c){go("classes");return}
   const d=classDashboardStats(classId);
-  const rag=classAverageRag(classId);
   const perf=classAveragePerformanceLabel(classId);
   const last=latestRegisterForClass(classId);
+  const trends=lessonTrendRows(classId).slice(0,6);
 
   app.innerHTML=`<section class="card"><button class="secondary" data-route="home">← Back to Home</button></section>
   <section class="card hero"><span class="eyebrow">CLASS SUMMARY</span><h2>${esc(c.name)}</h2><p>${esc(c.course||"Course not entered")} • ${c.learners.length} learners</p></section>
   <section class="grid3">
     <div class="metric"><span>Attendance</span><strong>${d.attendance===null?"—":d.attendance+"%"}</strong></div>
+    <div class="metric"><span>Late marks</span><strong>L×${classLateCount(c.id)}</strong></div>
     <div class="metric"><span>Performance</span><strong style="font-size:18px">${perf}</strong></div>
-    <div class="metric"><span>Average RAG</span><strong style="font-size:18px">${rag}</strong></div>
   </section>
   <section class="card"><div class="actions">
     <button id="classNewRegister">✅<b>New register</b><span class="small">Create today's register.</span></button>
     <button id="classCopyRegister">📋<b>Copy previous</b><span class="small">${last?dateUK(last.date)+" • "+esc(last.subject):"No previous register"}</span></button>
     <button id="classTracker">📊<b>View tracker</b><span class="small">Open learner progress.</span></button>
   </div></section>
+  <section class="card"><h3>Lesson trends</h3>
+    ${trends.length?trends.map(t=>`<div class="row"><div><b>${esc(t.subject)}</b><div class="small">${dateUK(t.date)}</div></div><div class="status-stack"><span class="badge ${t.lateRate>=20?"amber":"grey"}">Late ${t.lateRate}%</span><span class="badge ${t.poorRate>=30?"red":"grey"}">Poor ${t.poorRate}%</span></div></div>`).join(""):'<div class="empty">No lesson trend data yet.</div>'}
+  </section>
   <section class="card"><h3>Learners</h3>${c.learners.map(l=>{
-    const s=stats(c.id,l.id),p=averagePerformance(c.id,l.id),r=averageRag(c.id,l.id);
-    return `<div class="row"><div><b>${esc(l.name)}</b><div class="small">Attendance ${s.pct===null?"—":s.pct+"%"} • L×${s.lateCount} • ${p}</div></div><span class="badge ${ragClass(r)}">${r}</span></div>`;
+    const s=stats(c.id,l.id),p=averagePerformance(c.id,l.id);
+    return `<div class="row"><div><b>${esc(l.name)}</b><div class="small">Attendance ${s.pct===null?"—":s.pct+"%"} • L×${s.lateCount}</div></div><span class="badge ${performanceClass(p)}">${p}</span></div>`;
   }).join("")||'<div class="empty">No learners added.</div>'}</section>`;
 
   classNewRegister.onclick=()=>{state.current=c.id;save();register()};
@@ -394,7 +420,7 @@ function register(editId=null,copyId=null){
     const periods=teachingPeriods(c);
     rl.innerHTML=`<table class="register-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>
       ${periods.map((p,i)=>`<th class="sticky-head">Session ${i+1}<br><span class="small">${p.label}</span></th>`).join("")}
-      <th class="sticky-head">Performance</th><th class="sticky-head">On Track (RAG)</th></tr></thead><tbody>
+      <th class="sticky-head">Performance</th></tr></thead><tbody>
       ${c.learners.map(l=>`<tr><th class="sticky-col">${esc(l.name)}</th>
         ${periods.map(p=>`<td>
           <label class="tick-line"><input type="checkbox" data-present="${l.id}-${p.id}" ${["Present","Late"].includes(editing?.attendance?.[l.id]?.periods?.[p.id]?.status)?"checked":""}> Present</label>
@@ -404,10 +430,6 @@ function register(editId=null,copyId=null){
           <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Excellent" ${editing?.attendance?.[l.id]?.performance==="Excellent"?"checked":""}> Excellent</label>
           <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Average" ${editing?.attendance?.[l.id]?.performance==="Average"?"checked":""}> Average</label>
           <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Poor" ${editing?.attendance?.[l.id]?.performance==="Poor"?"checked":""}> Poor</label>
-        </td><td>
-          <label class="tick-line"><input type="radio" name="rag-${l.id}" value="Green" ${editing?.attendance?.[l.id]?.rag==="Green"?"checked":""}> Green</label>
-          <label class="tick-line"><input type="radio" name="rag-${l.id}" value="Amber" ${editing?.attendance?.[l.id]?.rag==="Amber"?"checked":""}> Amber</label>
-          <label class="tick-line"><input type="radio" name="rag-${l.id}" value="Red" ${editing?.attendance?.[l.id]?.rag==="Red"?"checked":""}> Red</label>
         </td></tr>`).join("")}
       </tbody></table>`;
     rl.querySelectorAll("[data-present]").forEach(ch=>ch.onchange=()=>{const late=rl.querySelector(`[data-late="${ch.dataset.present}"]`);if(!ch.checked)late.checked=false});
@@ -422,7 +444,7 @@ function register(editId=null,copyId=null){
     if(!rs.value.trim())return alert("Enter the subject covered.");
     const periods=teachingPeriods(c),attendance={};
     c.learners.forEach(l=>{
-      attendance[l.id]={periods:{},performance:rl.querySelector(`input[name="perf-${l.id}"]:checked`)?.value||"",rag:rl.querySelector(`input[name="rag-${l.id}"]:checked`)?.value||""};
+      attendance[l.id]={periods:{},performance:rl.querySelector(`input[name="perf-${l.id}"]:checked`)?.value||""};
       periods.forEach(p=>{
         const present=rl.querySelector(`[data-present="${l.id}-${p.id}"]`).checked;
         const late=rl.querySelector(`[data-late="${l.id}-${p.id}"]`).checked;
@@ -451,15 +473,15 @@ async function pdf(r,c){
   p.text(`Date: ${dateUK(r.date)}`,170,35);
   p.text(`Subject: ${r.subject}`,14,40);
 
-  const periods=r.periods||[],left=14,nameW=38,lateW=16,perfW=25,ragW=20;
-  const sessionW=(269-nameW-lateW-perfW-ragW)/Math.max(periods.length,1);
+  const periods=r.periods||[],left=14,nameW=38,lateW=16,perfW=25;
+  const sessionW=(269-nameW-lateW-perfW)/Math.max(periods.length,1);
 
   y=47;
   p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");
   p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
   periods.forEach((per,i)=>p.text(`S${i+1} ${per.label}`,left+nameW+i*sessionW+2,y+7));
   p.text("Late",left+nameW+periods.length*sessionW+2,y+7);
-  p.text("Performance",left+nameW+periods.length*sessionW+lateW+2,y+7);p.text("RAG",left+nameW+periods.length*sessionW+lateW+perfW+2,y+7);
+  p.text("Performance",left+nameW+periods.length*sessionW+lateW+2,y+7);
   y+=13;
 
   c.learners.forEach((l,i)=>{
@@ -473,7 +495,7 @@ async function pdf(r,c){
     p.setFont("helvetica","bold");
     p.text(`L×${dailyLateCount(r,l.id)}`,left+nameW+periods.length*sessionW+2,y+7);
     p.setFont("helvetica","normal");
-    p.text(r.attendance[l.id]?.performance||"—",left+nameW+periods.length*sessionW+lateW+2,y+7);p.text(r.attendance[l.id]?.rag||"—",left+nameW+periods.length*sessionW+lateW+perfW+2,y+7);
+    p.text(r.attendance[l.id]?.performance||"—",left+nameW+periods.length*sessionW+lateW+2,y+7);
     y+=12;
   });
 
@@ -492,26 +514,26 @@ function tracker(){
   const draw=()=>{
     c=state.classes.find(x=>x.id===tc.value);const from=trackFrom.value,to=trackTo.value;
     const regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
-    tout.innerHTML=`<section class="card"><h3>Attendance tracker</h3>${regs.length?`<div class="scroll tracker-wrap"><table class="tracker-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}</tr></thead><tbody>${c.learners.map(l=>{const overall=stats(c.id,l.id,from,to);return `<tr><th class="sticky-col"><button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">${esc(l.name)}<br><strong>${overall.pct===null?"—":overall.pct+"%"}</strong><br><span class="small">L×${overall.lateCount}</span><br><span class="small">Performance: ${averagePerformance(c.id,l.id,from,to)}</span><br><span class="badge ${ragClass(averageRag(c.id,l.id,from,to))}">RAG: ${averageRag(c.id,l.id,from,to)}</span></button></th>${regs.map(r=>{const pct=dayPercentage(r,l.id),perf=r.attendance[l.id]?.performance||"",cl=pct===100?"yes":pct>=80?"late":"no";const lateCount=dailyLateCount(r,l.id),rag=r.attendance[l.id]?.rag||"";return `<td class="${cl}"><strong>${pct===null?"—":pct+"%"}</strong><br><span class="small">L×${lateCount}</span>${perf?`<br><span class="small">${esc(perf)}</span>`:""}${rag?`<br><span class="badge ${ragClass(rag)}">${rag}</span>`:""}</td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No lessons recorded in this date range.</div>'}</section>`;
+    tout.innerHTML=`<section class="card"><h3>Attendance tracker</h3>${regs.length?`<div class="scroll tracker-wrap"><table class="tracker-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}</tr></thead><tbody>${c.learners.map(l=>{const overall=stats(c.id,l.id,from,to);return `<tr><th class="sticky-col"><button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">${esc(l.name)}<br><strong>${overall.pct===null?"—":overall.pct+"%"}</strong><br><span class="small">L×${overall.lateCount}</span><br><span class="small">Performance: ${averagePerformance(c.id,l.id,from,to)}</span></button></th>${regs.map(r=>{const pct=dayPercentage(r,l.id),perf=r.attendance[l.id]?.performance||"",cl=pct===100?"yes":pct>=80?"late":"no";const lateCount=dailyLateCount(r,l.id);return `<td class="${cl}"><strong>${pct===null?"—":pct+"%"}</strong><br><span class="small">L×${lateCount}</span>${perf?`<br><span class="small">${esc(perf)}</span>`:""}</td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No lessons recorded in this date range.</div>'}</section>`;
     tout.querySelectorAll("[data-learner-report]").forEach(b=>b.onclick=()=>learnerReport(c.id,b.dataset.learnerReport,from,to));
   };
   draw();tc.onchange=()=>{state.current=tc.value;save();c=cls();const regs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));trackFrom.value=regs[0]?.date||new Date().toISOString().slice(0,10);trackTo.value=regs.at(-1)?.date||new Date().toISOString().slice(0,10);draw()};applyTracker.onclick=draw;downloadTracker.onclick=()=>trackerPdf(c,trackFrom.value,trackTo.value);
 }
 function learnerReport(classId,learnerId,from,to){
   const c=state.classes.find(x=>x.id===classId),learner=c.learners.find(x=>x.id===learnerId),regs=state.registers.filter(r=>r.classId===classId&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(classId,learnerId,from,to);
-  app.innerHTML=`<section class="card"><button class="secondary" data-route="tracker">← Back to Tracker</button></section><section class="card hero"><span class="eyebrow">INDIVIDUAL ATTENDANCE REPORT</span><h2>${esc(learner.name)}</h2><p>${dateUK(from)} to ${dateUK(to)}</p></section><section class="grid3"><div class="metric"><span>Attendance</span><strong>${s.pct===null?"—":s.pct+"%"}</strong></div><div class="metric"><span>Total late marks</span><strong>L×${s.lateCount}</strong></div><div class="metric"><span>Average performance</span><strong style="font-size:18px">${averagePerformance(classId,learnerId,from,to)}</strong></div></section><section class="card"><span class="badge ${ragClass(averageRag(classId,learnerId,from,to))}">Average RAG: ${averageRag(classId,learnerId,from,to)}</span></section><section class="card"><h3>Attendance by lesson</h3>${regs.length?regs.map(r=>{const pct=dayPercentage(r,learnerId),perf=r.attendance[learnerId]?.performance||"Not recorded";const lateCount=dailyLateCount(r,learnerId),rag=r.attendance[learnerId]?.rag||"Not recorded";return `<div class="row"><div><b>${esc(r.subject)}</b><div class="small">${dateUK(r.date)}<br>L×${lateCount} • Performance: ${esc(perf)} • RAG: ${esc(rag)}</div></div><span class="badge ${pct===100?"green":pct>=80?"amber":"red"}">${pct}%</span></div>`}).join(""):'<div class="empty">No records.</div>'}</section><section class="card"><button class="primary" id="downloadLearnerPdf">Download learner PDF</button></section>`;
+  app.innerHTML=`<section class="card"><button class="secondary" data-route="tracker">← Back to Tracker</button></section><section class="card hero"><span class="eyebrow">INDIVIDUAL ATTENDANCE REPORT</span><h2>${esc(learner.name)}</h2><p>${dateUK(from)} to ${dateUK(to)}</p></section><section class="grid3"><div class="metric"><span>Attendance</span><strong>${s.pct===null?"—":s.pct+"%"}</strong></div><div class="metric"><span>Total late marks</span><strong>L×${s.lateCount}</strong></div><div class="metric"><span>Average performance</span><strong style="font-size:18px">${averagePerformance(classId,learnerId,from,to)}</strong></div></section><section class="card"><h3>Attendance by lesson</h3>${regs.length?regs.map(r=>{const pct=dayPercentage(r,learnerId),perf=r.attendance[learnerId]?.performance||"Not recorded";const lateCount=dailyLateCount(r,learnerId);return `<div class="row"><div><b>${esc(r.subject)}</b><div class="small">${dateUK(r.date)}<br>L×${lateCount} • Performance: ${esc(perf)}</div></div><span class="badge ${pct===100?"green":pct>=80?"amber":"red"}">${pct}%</span></div>`}).join(""):'<div class="empty">No records.</div>'}</section><section class="card"><button class="primary" id="downloadLearnerPdf">Download learner PDF</button></section>`;
   downloadLearnerPdf.onclick=()=>learnerPdf(c,learner,from,to);
 }
 async function trackerPdf(c,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
   p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text(`Lesson Tracker — ${c.name}`,14,21);p.setTextColor(32);p.setFontSize(8);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,35);
   let y=43,left=14,learnerW=50,lessonW=Math.max(25,(269-learnerW)/Math.max(regs.length,1));p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);regs.forEach((r,i)=>p.text(p.splitTextToSize(`${r.subject}\n${dateUK(r.date)}`,lessonW-3),left+learnerW+i*lessonW+1,y+5));y+=13;
-  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"} • L×${overall.lateCount}\n${averagePerformance(c.id,l.id,from,to)} • ${averageRag(c.id,l.id,from,to)}`,learnerW-3),left+2,y+4);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"} L×${dailyLateCount(r,l.id)}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
+  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"} • L×${overall.lateCount}\n${averagePerformance(c.id,l.id,from,to)}`,learnerW-3),left+2,y+4);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"} L×${dailyLateCount(r,l.id)}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
 }
 async function learnerPdf(c,learner,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(c.id,learner.id,from,to);
-  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"} • Total lateness: L×${s.lateCount}`,14,66);p.setFontSize(10);p.text(`Average performance: ${averagePerformance(c.id,learner.id,from,to)} • Average RAG: ${averageRag(c.id,learner.id,from,to)}`,14,73);let y=84;
-  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}\nRAG: ${r.attendance[learner.id]?.rag||"Not recorded"}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
+  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"} • Total lateness: L×${s.lateCount}`,14,66);p.setFontSize(10);p.text(`Average performance: ${averagePerformance(c.id,learner.id,from,to)}`,14,73);let y=84;
+  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
 }
 function documents(){
   app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Records</h2><p>Completed registers grouped by class and month.</p></section>
