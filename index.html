@@ -37,7 +37,7 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.7"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.8"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
@@ -72,21 +72,24 @@ function render(){nav.innerHTML=R.map(([k,l])=>`<button data-route="${k}" class=
   if(isInstalledApp())document.querySelectorAll("[data-install-app]").forEach(b=>b.classList.add("hidden"));
 }
 function cls(){return state.classes.find(x=>x.id===state.current)||state.classes[0]||null}
+function dailyLateCount(record,learnerId){
+  return Object.values(record.attendance[learnerId]?.periods||{}).filter(p=>p.status==="Late").length;
+}
 function dayPercentage(record,learnerId){
   const periods=Object.values(record.attendance[learnerId]?.periods||{});
   if(!periods.length)return null;
-  const sessionValue=100/periods.length;
-  let score=100;
-  periods.forEach(p=>{
-    if(p.status==="Absent")score-=sessionValue;
-    else if(p.status==="Late")score-=10;
-  });
-  return Math.max(0,Math.round(score));
+  const attended=periods.filter(p=>p.status==="Present"||p.status==="Late").length;
+  return Math.round(attended/periods.length*100);
 }
 function stats(cid,lid,from="",to=""){
   const regs=state.registers.filter(r=>r.classId===cid&&(!from||r.date>=from)&&(!to||r.date<=to));
   const values=regs.map(r=>dayPercentage(r,lid)).filter(v=>v!==null);
-  return {pct:values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):null,totalDays:values.length};
+  const lateCount=regs.reduce((sum,r)=>sum+dailyLateCount(r,lid),0);
+  return {
+    pct:values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):null,
+    totalDays:values.length,
+    lateCount
+  };
 }
 
 function classDashboardStats(classId){
@@ -159,7 +162,7 @@ function home(){
 
   <section class="card">
     <div class="row" style="border:0;padding-top:0">
-      <div><h3 style="margin-bottom:4px">Class comparison</h3><div class="small">Attendance, lateness and average performance across all saved classes.</div></div>
+      <div><h3 style="margin-bottom:4px">Class comparison</h3><div class="small">Attendance, late-session rate and average performance across all saved classes.</div></div>
     </div>
     ${state.classes.length?'<div style="height:340px"><canvas id="classComparisonChart"></canvas></div>':'<div class="empty">Create a class and save registers to see comparisons.</div>'}
     <p class="small">Tap a class bar or class card to open its lesson tracker.</p>
@@ -339,19 +342,46 @@ function register(editId=null){
 }
 async function pdf(r,c){
   let {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),y=38;
-  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Daily Register",14,21);
-  p.setTextColor(32);p.setFontSize(8);p.text(`Tutor: ${state.profile.name||"Not entered"}`,14,35);p.text(`Class: ${r.className}`,90,35);p.text(`Date: ${dateUK(r.date)}`,170,35);p.text(`Subject: ${r.subject}`,14,40);
-  const periods=r.periods||[],left=14,nameW=45,perfW=30,sessionW=(269-nameW-perfW)/Math.max(periods.length,1);
-  y=47;p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
+  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");
+  p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,12);
+  p.setFontSize(11);p.text("Daily Register",14,21);
+
+  p.setTextColor(32);p.setFontSize(8);
+  p.text(`Tutor: ${state.profile.name||"Not entered"}`,14,35);
+  p.text(`Class: ${r.className}`,90,35);
+  p.text(`Date: ${dateUK(r.date)}`,170,35);
+  p.text(`Subject: ${r.subject}`,14,40);
+
+  const periods=r.periods||[],left=14,nameW=42,lateW=18,perfW=28;
+  const sessionW=(269-nameW-lateW-perfW)/Math.max(periods.length,1);
+
+  y=47;
+  p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");
+  p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
   periods.forEach((per,i)=>p.text(`S${i+1} ${per.label}`,left+nameW+i*sessionW+2,y+7));
-  p.text("Performance",left+nameW+periods.length*sessionW+2,y+7);y+=13;
+  p.text("Late",left+nameW+periods.length*sessionW+2,y+7);
+  p.text("Performance",left+nameW+periods.length*sessionW+lateW+2,y+7);
+  y+=13;
+
   c.learners.forEach((l,i)=>{
     if(y>188){p.addPage("a4","landscape");y=18}
-    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,12,"F");p.setFont("helvetica","normal");p.text(l.name,left+2,y+7);
-    periods.forEach((per,j)=>{const st=r.attendance[l.id]?.periods?.[per.id]?.status||"Absent";p.text(st,left+nameW+j*sessionW+2,y+7)});
-    p.text(r.attendance[l.id]?.performance||"—",left+nameW+periods.length*sessionW+2,y+7);y+=12;
+    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,12,"F");
+    p.setFont("helvetica","normal");p.text(l.name,left+2,y+7);
+    periods.forEach((per,j)=>{
+      const st=r.attendance[l.id]?.periods?.[per.id]?.status||"Absent";
+      p.text(st,left+nameW+j*sessionW+2,y+7);
+    });
+    p.setFont("helvetica","bold");
+    p.text(`L×${dailyLateCount(r,l.id)}`,left+nameW+periods.length*sessionW+2,y+7);
+    p.setFont("helvetica","normal");
+    p.text(r.attendance[l.id]?.performance||"—",left+nameW+periods.length*sessionW+lateW+2,y+7);
+    y+=12;
   });
-  if(r.notes){y+=6;p.setFont("helvetica","bold");p.text("Notes for today",14,y);y+=5;p.setFont("helvetica","normal");p.text(p.splitTextToSize(r.notes,269),14,y)}
+
+  if(r.notes){
+    y+=6;p.setFont("helvetica","bold");p.text("Notes for today",14,y);
+    y+=5;p.setFont("helvetica","normal");p.text(p.splitTextToSize(r.notes,269),14,y);
+  }
   p.save(`${r.className}-${r.date}-Register.pdf`);
 }
 function tracker(){
@@ -363,26 +393,26 @@ function tracker(){
   const draw=()=>{
     c=state.classes.find(x=>x.id===tc.value);const from=trackFrom.value,to=trackTo.value;
     const regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
-    tout.innerHTML=`<section class="card"><h3>Attendance tracker</h3>${regs.length?`<div class="scroll tracker-wrap"><table class="tracker-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}</tr></thead><tbody>${c.learners.map(l=>{const overall=stats(c.id,l.id,from,to);return `<tr><th class="sticky-col"><button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">${esc(l.name)}<br><strong>${overall.pct===null?"—":overall.pct+"%"}</strong></button></th>${regs.map(r=>{const pct=dayPercentage(r,l.id),perf=r.attendance[l.id]?.performance||"",cl=pct===100?"yes":pct>=80?"late":"no";return `<td class="${cl}"><strong>${pct===null?"—":pct+"%"}</strong>${perf?`<br><span class="small">${esc(perf)}</span>`:""}</td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No lessons recorded in this date range.</div>'}</section>`;
+    tout.innerHTML=`<section class="card"><h3>Attendance tracker</h3>${regs.length?`<div class="scroll tracker-wrap"><table class="tracker-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}</tr></thead><tbody>${c.learners.map(l=>{const overall=stats(c.id,l.id,from,to);return `<tr><th class="sticky-col"><button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">${esc(l.name)}<br><strong>${overall.pct===null?"—":overall.pct+"%"}</strong><br><span class="small">L×${overall.lateCount}</span></button></th>${regs.map(r=>{const pct=dayPercentage(r,l.id),perf=r.attendance[l.id]?.performance||"",cl=pct===100?"yes":pct>=80?"late":"no";const lateCount=dailyLateCount(r,l.id);return `<td class="${cl}"><strong>${pct===null?"—":pct+"%"}</strong><br><span class="small">L×${lateCount}</span>${perf?`<br><span class="small">${esc(perf)}</span>`:""}</td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No lessons recorded in this date range.</div>'}</section>`;
     tout.querySelectorAll("[data-learner-report]").forEach(b=>b.onclick=()=>learnerReport(c.id,b.dataset.learnerReport,from,to));
   };
   draw();tc.onchange=()=>{state.current=tc.value;save();c=cls();const regs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));trackFrom.value=regs[0]?.date||new Date().toISOString().slice(0,10);trackTo.value=regs.at(-1)?.date||new Date().toISOString().slice(0,10);draw()};applyTracker.onclick=draw;downloadTracker.onclick=()=>trackerPdf(c,trackFrom.value,trackTo.value);
 }
 function learnerReport(classId,learnerId,from,to){
   const c=state.classes.find(x=>x.id===classId),learner=c.learners.find(x=>x.id===learnerId),regs=state.registers.filter(r=>r.classId===classId&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(classId,learnerId,from,to);
-  app.innerHTML=`<section class="card"><button class="secondary" data-route="tracker">← Back to Tracker</button></section><section class="card hero"><span class="eyebrow">INDIVIDUAL ATTENDANCE REPORT</span><h2>${esc(learner.name)}</h2><p>${dateUK(from)} to ${dateUK(to)}</p></section><section class="grid3"><div class="metric"><span>Attendance</span><strong>${s.pct===null?"—":s.pct+"%"}</strong></div><div class="metric"><span>Sessions recorded</span><strong>${s.totalDays}</strong></div><div class="metric"><span>Class</span><strong style="font-size:16px">${esc(c.name)}</strong></div></section><section class="card"><h3>Attendance by lesson</h3>${regs.length?regs.map(r=>{const pct=dayPercentage(r,learnerId),perf=r.attendance[learnerId]?.performance||"Not recorded";return `<div class="row"><div><b>${esc(r.subject)}</b><div class="small">${dateUK(r.date)}<br>Performance: ${esc(perf)}</div></div><span class="badge ${pct===100?"green":pct>=80?"amber":"red"}">${pct}%</span></div>`}).join(""):'<div class="empty">No records.</div>'}</section><section class="card"><button class="primary" id="downloadLearnerPdf">Download learner PDF</button></section>`;
+  app.innerHTML=`<section class="card"><button class="secondary" data-route="tracker">← Back to Tracker</button></section><section class="card hero"><span class="eyebrow">INDIVIDUAL ATTENDANCE REPORT</span><h2>${esc(learner.name)}</h2><p>${dateUK(from)} to ${dateUK(to)}</p></section><section class="grid3"><div class="metric"><span>Attendance</span><strong>${s.pct===null?"—":s.pct+"%"}</strong></div><div class="metric"><span>Total late marks</span><strong>L×${s.lateCount}</strong></div><div class="metric"><span>Class</span><strong style="font-size:16px">${esc(c.name)}</strong></div></section><section class="card"><h3>Attendance by lesson</h3>${regs.length?regs.map(r=>{const pct=dayPercentage(r,learnerId),perf=r.attendance[learnerId]?.performance||"Not recorded";const lateCount=dailyLateCount(r,learnerId);return `<div class="row"><div><b>${esc(r.subject)}</b><div class="small">${dateUK(r.date)}<br>L×${lateCount} • Performance: ${esc(perf)}</div></div><span class="badge ${pct===100?"green":pct>=80?"amber":"red"}">${pct}%</span></div>`}).join(""):'<div class="empty">No records.</div>'}</section><section class="card"><button class="primary" id="downloadLearnerPdf">Download learner PDF</button></section>`;
   downloadLearnerPdf.onclick=()=>learnerPdf(c,learner,from,to);
 }
 async function trackerPdf(c,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
   p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text(`Lesson Tracker — ${c.name}`,14,21);p.setTextColor(32);p.setFontSize(8);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,35);
   let y=43,left=14,learnerW=50,lessonW=Math.max(25,(269-learnerW)/Math.max(regs.length,1));p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);regs.forEach((r,i)=>p.text(p.splitTextToSize(`${r.subject}\n${dateUK(r.date)}`,lessonW-3),left+learnerW+i*lessonW+1,y+5));y+=13;
-  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"}`,learnerW-3),left+2,y+5);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
+  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"} • L×${overall.lateCount}`,learnerW-3),left+2,y+5);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"} L×${dailyLateCount(r,l.id)}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
 }
 async function learnerPdf(c,learner,from,to){
   const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(c.id,learner.id,from,to);
-  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"}`,14,66);let y=78;
-  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
+  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"} • Total lateness: L×${s.lateCount}`,14,66);let y=78;
+  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nLateness: L×${dailyLateCount(r,learner.id)}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
 }
 function documents(){
   const classOptions=state.classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
