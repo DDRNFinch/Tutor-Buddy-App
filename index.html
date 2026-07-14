@@ -24,39 +24,40 @@ table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid 
 .tracker-table .sticky-head{position:sticky;top:0;z-index:4;background:#eef3f9}
 .tracker-table .sticky-col.sticky-head{z-index:5}
 
+
+.register-table{min-width:max-content}
+.register-table th,.register-table td{min-width:145px;text-align:center;vertical-align:top}
+.register-table .sticky-col{position:sticky;left:0;z-index:3;background:#fff;min-width:180px;text-align:left}
+.register-table .sticky-head{position:sticky;top:0;z-index:4;background:#eef3f9}
+.register-table .sticky-col.sticky-head{z-index:5}
+.tick-line{display:flex;align-items:center;gap:6px;margin:4px 0;font-weight:600}
+.tick-line input{width:auto;margin:0}
+
 </style></head><body>
 <header><div class="brand"><img src="icon-192.png"><div><h1>Tutor Buddy</h1><p>Registers, attendance and lesson tracking</p></div></div><nav id="nav"></nav><div class="mobile"><select id="mnav"></select></div></header>
 <main id="app"></main><script>
-const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.3"};let state=load(),route="home";
+const KEY="tutorBuddyV1";const blank={profile:{name:"",college:"",email:""},classes:[],registers:[],current:null,version:"1.0.4"};let state=load(),route="home";
 function load(){try{return Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){return structuredClone(blank)}}function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function id(p){return p+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,7)}function esc(s=""){return String(s).replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]))}
 function dateUK(v){return v?new Date(v+"T12:00:00").toLocaleDateString("en-GB"):""}const R=[["home","🏠 Home"],["classes","👥 Classes"],["register","✅ New Register"],["tracker","📊 Lesson Tracker"],["documents","📄 Documents"],["settings","⚙️ Settings"]];
 function go(x){route=x;render()}document.addEventListener("click",e=>{let b=e.target.closest("[data-route]");if(b)go(b.dataset.route)});mnav.onchange=()=>go(mnav.value);
 function render(){nav.innerHTML=R.map(([k,l])=>`<button data-route="${k}" class="${route===k?"active":""}">${l}</button>`).join("");mnav.innerHTML=R.map(([k,l])=>`<option value="${k}" ${route===k?"selected":""}>${l}</option>`).join("");({home,classes,register,tracker,documents,settings}[route]||home)()}
 function cls(){return state.classes.find(x=>x.id===state.current)||state.classes[0]||null}
-function stats(cid,lid,from="",to=""){
-  let p=0,l=0,aa=0,ua=0,s=0;
-  state.registers.filter(r=>r.classId===cid&&(!from||r.date>=from)&&(!to||r.date<=to)).forEach(r=>{
-    const periods=r.attendance[lid]?.periods||{};
-    Object.values(periods).forEach(x=>{
-      if(x.status==="Present")p++;
-      if(x.status==="Late")l++;
-      if(x.status==="Authorised Absence")aa++;
-      if(x.status==="Unauthorised Absence")ua++;
-      if(x.status==="Sick")s++;
-    });
-  });
-  let t=p+l+aa+ua+s;
-  return{p,l,aa,ua,s,t,pct:t?Math.round((p+l)/t*100):null};
-}
-function statusCode(status){
-  return status==="Present"?"P":status==="Late"?"L":status==="Authorised Absence"?"A":status==="Unauthorised Absence"?"U":status==="Sick"?"S":"—";
-}
 function dayPercentage(record,learnerId){
   const periods=Object.values(record.attendance[learnerId]?.periods||{});
   if(!periods.length)return null;
-  const attended=periods.filter(p=>p.status==="Present"||p.status==="Late").length;
-  return Math.round(attended/periods.length*100);
+  const sessionValue=100/periods.length;
+  let score=100;
+  periods.forEach(p=>{
+    if(p.status==="Absent")score-=sessionValue;
+    else if(p.status==="Late")score-=10;
+  });
+  return Math.max(0,Math.round(score));
+}
+function stats(cid,lid,from="",to=""){
+  const regs=state.registers.filter(r=>r.classId===cid&&(!from||r.date>=from)&&(!to||r.date<=to));
+  const values=regs.map(r=>dayPercentage(r,lid)).filter(v=>v!==null);
+  return {pct:values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):null,totalDays:values.length};
 }
 function home(){let recent=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5),learners=state.classes.reduce((n,c)=>n+c.learners.length,0);app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY TUTOR TOOLKIT</span><h2>Welcome${state.profile.name?", "+esc(state.profile.name):""}</h2><p>Create registers, track attendance and see which learners attended each subject.</p></section><section class="grid3"><div class="metric"><span>Classes</span><strong>${state.classes.length}</strong></div><div class="metric"><span>Learners</span><strong>${learners}</strong></div><div class="metric"><span>Registers</span><strong>${state.registers.length}</strong></div></section><section class="actions"><button data-route="register">✅<b>Create today's register</b><span class="small">Date, times, subject and attendance.</span></button><button data-route="classes">👥<b>Manage classes</b><span class="small">Add new learners at any time.</span></button><button data-route="tracker">📊<b>Lesson tracker</b><span class="small">Attendance percentages and missed subjects.</span></button></section><section class="card"><h3>Recent registers</h3>${recent.length?recent.map(r=>`<div class="row"><div><b>${esc(r.className)}</b><div class="small">${dateUK(r.date)} • ${esc(r.subject)}</div></div><span class="badge grey">${Object.values(r.attendance).filter(x=>Object.values(x.periods||{}).some(p=>["Present","Late"].includes(p.status))).length}/${Object.keys(r.attendance).length}</span></div>`).join(""):'<div class="empty">No registers saved yet.</div>'}</section>`}
 function classes(){app.innerHTML=`<section class="card hero"><span class="eyebrow">CLASS SETUP</span><h2>Classes</h2><p>Create a class with usual times, then add learners.</p></section><section class="card"><button class="primary" id="newClass">+ Create class</button></section><section class="card"><h3>Your classes</h3><div id="list"></div></section>`;drawClasses();newClass.onclick=()=>classForm()}
@@ -121,284 +122,102 @@ function register(){
     app.innerHTML=`<section class="card"><h2>Create a class first</h2><button class="primary" data-route="classes">Create class</button></section>`;
     return;
   }
-
-  let c=cls();
-  state.current=c.id;
-
-  app.innerHTML=`<section class="card hero">
-    <span class="eyebrow">DAILY REGISTER</span>
-    <h2>Create Register</h2>
-    <p>Tick Present for each learner. Tick Late if they arrived late. Leave Present unticked and choose the absence reason when needed.</p>
-  </section>
-
-  <section class="card">
-    <div class="grid">
-      <label>Class
-        <select id="rc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>
-      </label>
-      <label>Date<input id="rd" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
-      <label>Subject covered<input id="rs" placeholder="e.g. Installing floor joists"></label>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="buttons">
-      <button class="secondary" id="all">Mark all present</button>
-      <button class="secondary" id="none">Clear all</button>
-    </div>
-    <div id="rl"></div>
-  </section>
-
-  <section class="card">
-    <label>Notes for today
-      <textarea id="rn" placeholder="Add any comments about the lesson, class or individual learners."></textarea>
-    </label>
-  </section>
-
-  <section class="card">
-    <button class="primary" id="saveReg">Save Register and Generate PDF</button>
-  </section>`;
+  let c=cls();state.current=c.id;
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">DAILY REGISTER</span><h2>Create Register</h2><p>Tick Present for each session. Tick Late where needed. Unticked Present means absent.</p></section>
+  <section class="card"><div class="grid">
+    <label>Class<select id="rc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>
+    <label>Date<input id="rd" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+    <label>Subject covered<input id="rs" placeholder="e.g. Installing floor joists"></label>
+  </div></section>
+  <section class="card"><div class="buttons"><button class="secondary" id="all">Mark all present</button><button class="secondary" id="none">Clear all</button></div><div id="rl" class="scroll"></div></section>
+  <section class="card"><label>Notes for today<textarea id="rn" placeholder="Add any comments about the lesson, class or individual learners."></textarea></label></section>
+  <section class="card"><button class="primary" id="saveReg">Save Register and Generate PDF</button></section>`;
 
   const draw=()=>{
     c=state.classes.find(x=>x.id===rc.value);
-    rl.innerHTML=c.learners.map(l=>`
-      <section class="card" style="margin:10px 0">
-        <h3>${esc(l.name)}</h3>
-        <div class="grid">
-          <label style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" data-present="${l.id}" style="width:auto;margin:0"> Present
-          </label>
-          <label style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" data-late="${l.id}" style="width:auto;margin:0"> Late
-          </label>
-          <label>Absence reason
-            <select data-absence="${l.id}">
-              <option value="Unauthorised Absence">Unauthorised absence</option>
-              <option value="Authorised Absence">Authorised absence</option>
-              <option value="Sick">Sick</option>
-            </select>
-          </label>
-          <label>Behaviour and performance
-            <select data-performance="${l.id}">
-              <option value="">Not recorded</option>
-              <option value="Excellent">Excellent</option>
-              <option value="Average">Average</option>
-              <option value="Poor">Poor</option>
-            </select>
-          </label>
-        </div>
-      </section>`).join("");
-
-    rl.querySelectorAll("[data-present]").forEach(ch=>{
-      ch.onchange=()=>{
-        const late=rl.querySelector(`[data-late="${ch.dataset.present}"]`);
-        if(!ch.checked)late.checked=false;
-      };
-    });
-    rl.querySelectorAll("[data-late]").forEach(ch=>{
-      ch.onchange=()=>{
-        const present=rl.querySelector(`[data-present="${ch.dataset.late}"]`);
-        if(ch.checked)present.checked=true;
-      };
-    });
+    const periods=teachingPeriods(c);
+    rl.innerHTML=`<table class="register-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>
+      ${periods.map((p,i)=>`<th class="sticky-head">Session ${i+1}<br><span class="small">${p.label}</span></th>`).join("")}
+      <th class="sticky-head">Performance</th></tr></thead><tbody>
+      ${c.learners.map(l=>`<tr><th class="sticky-col">${esc(l.name)}</th>
+        ${periods.map(p=>`<td>
+          <label class="tick-line"><input type="checkbox" data-present="${l.id}-${p.id}"> Present</label>
+          <label class="tick-line"><input type="checkbox" data-late="${l.id}-${p.id}"> Late</label>
+        </td>`).join("")}
+        <td>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Excellent"> Excellent</label>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Average"> Average</label>
+          <label class="tick-line"><input type="radio" name="perf-${l.id}" value="Poor"> Poor</label>
+        </td></tr>`).join("")}
+      </tbody></table>`;
+    rl.querySelectorAll("[data-present]").forEach(ch=>ch.onchange=()=>{const late=rl.querySelector(`[data-late="${ch.dataset.present}"]`);if(!ch.checked)late.checked=false});
+    rl.querySelectorAll("[data-late]").forEach(ch=>ch.onchange=()=>{if(ch.checked)rl.querySelector(`[data-present="${ch.dataset.late}"]`).checked=true});
   };
-
   draw();
-
-  rc.onchange=()=>{
-    state.current=rc.value;
-    save();
-    draw();
-  };
-
-  all.onclick=()=>{
-    rl.querySelectorAll("[data-present]").forEach(x=>x.checked=true);
-    rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false);
-  };
-
-  none.onclick=()=>{
-    rl.querySelectorAll("[data-present]").forEach(x=>x.checked=false);
-    rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false);
-  };
-
+  rc.onchange=()=>{state.current=rc.value;save();draw()};
+  all.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=true);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
+  none.onclick=()=>{rl.querySelectorAll("[data-present]").forEach(x=>x.checked=false);rl.querySelectorAll("[data-late]").forEach(x=>x.checked=false)};
   saveReg.onclick=async()=>{
     if(!rs.value.trim())return alert("Enter the subject covered.");
-
-    const periods=teachingPeriods(c);
-    const attendance={};
-
+    const periods=teachingPeriods(c),attendance={};
     c.learners.forEach(l=>{
-      const present=rl.querySelector(`[data-present="${l.id}"]`).checked;
-      const late=rl.querySelector(`[data-late="${l.id}"]`).checked;
-      const absence=rl.querySelector(`[data-absence="${l.id}"]`).value;
-      const performance=rl.querySelector(`[data-performance="${l.id}"]`).value;
-      const overallStatus=present?(late?"Late":"Present"):absence;
-
-      attendance[l.id]={
-        status:overallStatus,
-        performance,
-        periods:{}
-      };
-
+      attendance[l.id]={periods:{},performance:rl.querySelector(`input[name="perf-${l.id}"]:checked`)?.value||""};
       periods.forEach(p=>{
-        attendance[l.id].periods[p.id]={
-          label:p.label,start:p.start,end:p.end,status:overallStatus
-        };
+        const present=rl.querySelector(`[data-present="${l.id}-${p.id}"]`).checked;
+        const late=rl.querySelector(`[data-late="${l.id}-${p.id}"]`).checked;
+        attendance[l.id].periods[p.id]={label:p.label,start:p.start,end:p.end,status:present?(late?"Late":"Present"):"Absent"};
       });
     });
-
-    const rec={
-      id:id("reg"),
-      classId:c.id,
-      className:c.name,
-      course:c.course,
-      date:rd.value,
-      subject:rs.value.trim(),
-      notes:rn.value.trim(),
-      periods,
-      attendance
-    };
-
-    state.registers.push(rec);
-    save();
-    await pdf(rec,c);
-    alert("Register saved.");
-    go("documents");
+    const rec={id:id("reg"),classId:c.id,className:c.name,course:c.course,date:rd.value,subject:rs.value.trim(),notes:rn.value.trim(),periods,attendance};
+    state.registers.push(rec);save();await pdf(rec,c);alert("Register saved.");go("documents");
   };
 }
 async function pdf(r,c){
-  let {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"}),y=40;
-  p.setFillColor(49,92,155);p.rect(0,0,210,30,"F");
-  p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,13);
-  p.setFontSize(12);p.text("Daily Register",14,22);
-  p.setTextColor(32);p.setFontSize(9);
-  [["Class",r.className],["Course",r.course||"Not entered"],["Date",dateUK(r.date)],["Subject",r.subject]].forEach(([a,b],i)=>{
-    let x=i%2?110:14;if(i&&i%2===0)y+=9;p.setFont("helvetica","bold");p.text(a+":",x,y);p.setFont("helvetica","normal");p.text(String(b),x+24,y)
+  let {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),y=38;
+  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(18);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Daily Register",14,21);
+  p.setTextColor(32);p.setFontSize(8);p.text(`Class: ${r.className}`,14,35);p.text(`Date: ${dateUK(r.date)}`,100,35);p.text(`Subject: ${r.subject}`,170,35);
+  const periods=r.periods||[],left=14,nameW=45,perfW=30,sessionW=(269-nameW-perfW)/Math.max(periods.length,1);
+  y=42;p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);
+  periods.forEach((per,i)=>p.text(`S${i+1} ${per.label}`,left+nameW+i*sessionW+2,y+7));
+  p.text("Performance",left+nameW+periods.length*sessionW+2,y+7);y+=13;
+  c.learners.forEach((l,i)=>{
+    if(y>188){p.addPage("a4","landscape");y=18}
+    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,12,"F");p.setFont("helvetica","normal");p.text(l.name,left+2,y+7);
+    periods.forEach((per,j)=>{const st=r.attendance[l.id]?.periods?.[per.id]?.status||"Absent";p.text(st,left+nameW+j*sessionW+2,y+7)});
+    p.text(r.attendance[l.id]?.performance||"—",left+nameW+periods.length*sessionW+2,y+7);y+=12;
   });
-  y+=16;
-  const periods=r.periods||[];
-  const colW=(182-58)/Math.max(periods.length,1);
-  p.setFillColor(232,238,247);p.rect(14,y,182,12,"F");
-  p.setFont("helvetica","bold");p.text("Learner",17,y+7);
-  periods.forEach((per,i)=>p.text(per.label,14+58+i*colW+2,y+7));
-  y+=12;
-  c.learners.forEach((learner,i)=>{
-    if(y>275){p.addPage();y=20}
-    p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(14,y,182,11,"F");
-    p.setFont("helvetica","normal");p.text(learner.name,17,y+7);
-    periods.forEach((per,j)=>{
-      const st=r.attendance[learner.id]?.periods?.[per.id]?.status||r.attendance[learner.id]?.status||"Not marked";
-      p.setFontSize(7);p.text(p.splitTextToSize(st,colW-3),14+58+j*colW+2,y+5);
-    });
-    const perf=r.attendance[learner.id]?.performance||"";
-    if(perf){
-      p.setFontSize(6.5);
-      p.text(`Performance: ${perf}`,17,y+10);
-    }
-    p.setFontSize(9);y+=13;
-  });
-  if(r.notes){y+=8;p.setFont("helvetica","bold");p.text("Session notes",14,y);y+=6;p.setFont("helvetica","normal");p.text(p.splitTextToSize(r.notes,182),14,y)}
-  p.setFontSize(8);p.setTextColor(100);p.text("Generated by Tutor Buddy • Version "+state.version,14,290);
-  p.save(r.className+"-"+r.date+"-Register.pdf")
+  if(r.notes){y+=6;p.setFont("helvetica","bold");p.text("Notes for today",14,y);y+=5;p.setFont("helvetica","normal");p.text(p.splitTextToSize(r.notes,269),14,y)}
+  p.save(`${r.className}-${r.date}-Register.pdf`);
 }
 function tracker(){
-  if(!state.classes.length){
-    app.innerHTML='<section class="card"><div class="empty">Create a class first.</div></section>';
-    return;
-  }
-
-  let c=cls();
-  const allRegs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));
-  const firstDate=allRegs[0]?.date||new Date().toISOString().slice(0,10);
-  const lastDate=allRegs.at(-1)?.date||new Date().toISOString().slice(0,10);
-
-  app.innerHTML=`<section class="card hero">
-    <span class="eyebrow">ATTENDANCE AND LESSON COVERAGE</span>
-    <h2>Lesson Tracker</h2>
-    <p>Learners stay fixed on the left while you scroll through dated lesson sessions.</p>
-  </section>
-
-  <section class="card">
-    <div class="grid">
-      <label>Class
-        <select id="tc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>
-      </label>
-      <label>From date<input id="trackFrom" type="date" value="${firstDate}"></label>
-      <label>To date<input id="trackTo" type="date" value="${lastDate}"></label>
-    </div>
-    <div class="buttons">
-      <button class="primary" id="applyTracker">Apply dates</button>
-      <button class="secondary" id="downloadTracker">Download tracker PDF</button>
-    </div>
-    <p class="small">Codes: P = Present, L = Late, A = Authorised absence, U = Unauthorised absence, S = Sick.</p>
-  </section>
-
-  <section id="tout"></section>`;
-
+  if(!state.classes.length){app.innerHTML='<section class="card"><div class="empty">Create a class first.</div></section>';return}
+  let c=cls(),allRegs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));
+  const firstDate=allRegs[0]?.date||new Date().toISOString().slice(0,10),lastDate=allRegs.at(-1)?.date||new Date().toISOString().slice(0,10);
+  app.innerHTML=`<section class="card hero"><span class="eyebrow">ATTENDANCE AND LESSON COVERAGE</span><h2>Lesson Tracker</h2><p>Learners remain fixed on the left while you scroll through dated sessions.</p></section>
+  <section class="card"><div class="grid"><label>Class<select id="tc">${state.classes.map(x=>`<option value="${x.id}" ${x.id===c.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label><label>From date<input id="trackFrom" type="date" value="${firstDate}"></label><label>To date<input id="trackTo" type="date" value="${lastDate}"></label></div><div class="buttons"><button class="primary" id="applyTracker">Apply dates</button><button class="secondary" id="downloadTracker">Download tracker PDF</button></div></section><section id="tout"></section>`;
   const draw=()=>{
-    c=state.classes.find(x=>x.id===tc.value);
-    const from=trackFrom.value,to=trackTo.value;
-    const regs=state.registers
-      .filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to))
-      .sort((a,b)=>a.date.localeCompare(b.date));
-
-    tout.innerHTML=`<section class="card">
-      <h3>Attendance tracker</h3>
-      ${regs.length?`
-      <div class="scroll tracker-wrap">
-        <table class="tracker-table">
-          <thead>
-            <tr>
-              <th class="sticky-col sticky-head">Learner</th>
-              ${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}
-            </tr>
-          </thead>
-          <tbody>
-            ${c.learners.map(l=>{
-              const s=stats(c.id,l.id,from,to);
-              return `<tr>
-                <th class="sticky-col">
-                  <button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">
-                    ${esc(l.name)}<br>
-                    <strong>${s.pct===null?"—":s.pct+"%"}</strong>
-                  </button>
-                </th>
-                ${regs.map(r=>{
-                  const status=r.attendance[l.id]?.status || Object.values(r.attendance[l.id]?.periods||{})[0]?.status || "Not marked";
-                  const code=statusCode(status);
-                  const perf=r.attendance[l.id]?.performance||"";
-                  const cls=status==="Present"?"yes":status==="Late"?"late":"no";
-                  return `<td class="${cls}">
-                    <strong>${code}</strong>
-                    ${perf?`<br><span class="small">${esc(perf)}</span>`:""}
-                  </td>`;
-                }).join("")}
-              </tr>`;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>`:'<div class="empty">No lessons recorded in this date range.</div>'}
-    </section>`;
-
-    tout.querySelectorAll("[data-learner-report]").forEach(b=>{
-      b.onclick=()=>learnerReport(c.id,b.dataset.learnerReport,from,to);
-    });
+    c=state.classes.find(x=>x.id===tc.value);const from=trackFrom.value,to=trackTo.value;
+    const regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
+    tout.innerHTML=`<section class="card"><h3>Attendance tracker</h3>${regs.length?`<div class="scroll tracker-wrap"><table class="tracker-table"><thead><tr><th class="sticky-col sticky-head">Learner</th>${regs.map(r=>`<th class="sticky-head">${esc(r.subject)}<br><span class="small">${dateUK(r.date)}</span></th>`).join("")}</tr></thead><tbody>${c.learners.map(l=>{const overall=stats(c.id,l.id,from,to);return `<tr><th class="sticky-col"><button class="secondary learner-link" data-learner-report="${l.id}" style="padding:6px;width:100%;text-align:left">${esc(l.name)}<br><strong>${overall.pct===null?"—":overall.pct+"%"}</strong></button></th>${regs.map(r=>{const pct=dayPercentage(r,l.id),perf=r.attendance[l.id]?.performance||"",cl=pct===100?"yes":pct>=80?"late":"no";return `<td class="${cl}"><strong>${pct===null?"—":pct+"%"}</strong>${perf?`<br><span class="small">${esc(perf)}</span>`:""}</td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No lessons recorded in this date range.</div>'}</section>`;
+    tout.querySelectorAll("[data-learner-report]").forEach(b=>b.onclick=()=>learnerReport(c.id,b.dataset.learnerReport,from,to));
   };
-
-  draw();
-
-  tc.onchange=()=>{
-    state.current=tc.value;
-    save();
-    c=cls();
-    const regs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));
-    trackFrom.value=regs[0]?.date||new Date().toISOString().slice(0,10);
-    trackTo.value=regs.at(-1)?.date||new Date().toISOString().slice(0,10);
-    draw();
-  };
-
-  applyTracker.onclick=draw;
-  downloadTracker.onclick=()=>trackerPdf(c,trackFrom.value,trackTo.value);
+  draw();tc.onchange=()=>{state.current=tc.value;save();c=cls();const regs=state.registers.filter(r=>r.classId===c.id).sort((a,b)=>a.date.localeCompare(b.date));trackFrom.value=regs[0]?.date||new Date().toISOString().slice(0,10);trackTo.value=regs.at(-1)?.date||new Date().toISOString().slice(0,10);draw()};applyTracker.onclick=draw;downloadTracker.onclick=()=>trackerPdf(c,trackFrom.value,trackTo.value);
+}
+function learnerReport(classId,learnerId,from,to){
+  const c=state.classes.find(x=>x.id===classId),learner=c.learners.find(x=>x.id===learnerId),regs=state.registers.filter(r=>r.classId===classId&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(classId,learnerId,from,to);
+  app.innerHTML=`<section class="card"><button class="secondary" data-route="tracker">← Back to Tracker</button></section><section class="card hero"><span class="eyebrow">INDIVIDUAL ATTENDANCE REPORT</span><h2>${esc(learner.name)}</h2><p>${dateUK(from)} to ${dateUK(to)}</p></section><section class="grid3"><div class="metric"><span>Attendance</span><strong>${s.pct===null?"—":s.pct+"%"}</strong></div><div class="metric"><span>Sessions recorded</span><strong>${s.totalDays}</strong></div><div class="metric"><span>Class</span><strong style="font-size:16px">${esc(c.name)}</strong></div></section><section class="card"><h3>Attendance by lesson</h3>${regs.length?regs.map(r=>{const pct=dayPercentage(r,learnerId),perf=r.attendance[learnerId]?.performance||"Not recorded";return `<div class="row"><div><b>${esc(r.subject)}</b><div class="small">${dateUK(r.date)}<br>Performance: ${esc(perf)}</div></div><span class="badge ${pct===100?"green":pct>=80?"amber":"red"}">${pct}%</span></div>`}).join(""):'<div class="empty">No records.</div>'}</section><section class="card"><button class="primary" id="downloadLearnerPdf">Download learner PDF</button></section>`;
+  downloadLearnerPdf.onclick=()=>learnerPdf(c,learner,from,to);
+}
+async function trackerPdf(c,from,to){
+  const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date));
+  p.setFillColor(49,92,155);p.rect(0,0,297,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text(`Lesson Tracker — ${c.name}`,14,21);p.setTextColor(32);p.setFontSize(8);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,35);
+  let y=43,left=14,learnerW=50,lessonW=Math.max(25,(269-learnerW)/Math.max(regs.length,1));p.setFillColor(232,238,247);p.rect(left,y,269,13,"F");p.setFont("helvetica","bold");p.text("Learner",left+2,y+7);regs.forEach((r,i)=>p.text(p.splitTextToSize(`${r.subject}\n${dateUK(r.date)}`,lessonW-3),left+learnerW+i*lessonW+1,y+5));y+=13;
+  c.learners.forEach((l,i)=>{if(y+14>195){p.addPage("a4","landscape");y=18}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.rect(left,y,269,14,"F");const overall=stats(c.id,l.id,from,to);p.setFont("helvetica","normal");p.setFontSize(7);p.text(p.splitTextToSize(`${l.name}\n${overall.pct===null?"—":overall.pct+"%"}`,learnerW-3),left+2,y+5);regs.forEach((r,j)=>{const pct=dayPercentage(r,l.id);p.setFont("helvetica","bold");p.text(`${pct===null?"—":pct+"%"}`,left+learnerW+j*lessonW+2,y+8)});y+=14});p.save(`${c.name}-${from}-to-${to}-Lesson-Tracker.pdf`);
+}
+async function learnerPdf(c,learner,from,to){
+  const {jsPDF}=window.jspdf,p=new jsPDF({unit:"mm",format:"a4"}),regs=state.registers.filter(r=>r.classId===c.id&&(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)),s=stats(c.id,learner.id,from,to);
+  p.setFillColor(49,92,155);p.rect(0,0,210,28,"F");p.setTextColor(255);p.setFont("helvetica","bold");p.setFontSize(17);p.text("Tutor Buddy",14,12);p.setFontSize(11);p.text("Individual Attendance Report",14,21);p.setTextColor(32);p.setFontSize(9);p.text(`Learner: ${learner.name}`,14,38);p.text(`Class: ${c.name}`,14,46);p.text(`Date range: ${dateUK(from)} to ${dateUK(to)}`,14,54);p.setFont("helvetica","bold");p.setFontSize(13);p.text(`Attendance: ${s.pct===null?"—":s.pct+"%"}`,14,66);let y=78;
+  regs.forEach((r,i)=>{const pct=dayPercentage(r,learner.id),perf=r.attendance[learner.id]?.performance||"Not recorded",lines=p.splitTextToSize(`${r.subject} — ${dateUK(r.date)}\nDaily attendance: ${pct===null?"—":pct+"%"}\nPerformance: ${perf}`,180),h=lines.length*4+8;if(y+h>278){p.addPage();y=20}p.setFillColor(i%2?248:242,i%2?249:245,i%2?251:248);p.roundedRect(14,y-3,182,h,2,2,"F");p.setFont("helvetica","normal");p.setFontSize(8);p.text(lines,18,y+2);y+=h+4});p.save(`${learner.name}-${from}-to-${to}-Attendance-Report.pdf`);
 }
 function documents(){let regs=[...state.registers].sort((a,b)=>b.date.localeCompare(a.date));app.innerHTML=`<section class="card hero"><span class="eyebrow">SAVED RECORDS</span><h2>Documents</h2></section><section class="card">${regs.length?regs.map(r=>`<div class="row"><div><b>${esc(r.className)} — ${dateUK(r.date)}</b><div class="small">${esc(r.subject)}</div></div><div class="buttons"><button class="secondary" data-dl="${r.id}">Download PDF</button><button class="danger" data-del="${r.id}">Delete</button></div></div>`).join(""):'<div class="empty">No documents yet.</div>'}</section>`;app.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{let r=state.registers.find(x=>x.id===b.dataset.dl),c=state.classes.find(x=>x.id===r.classId);pdf(r,c)});app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{if(confirm("Delete this register?")){state.registers=state.registers.filter(x=>x.id!==b.dataset.del);save();documents()}})}
 function settings(){app.innerHTML=`<section class="card hero"><span class="eyebrow">TUTOR PROFILE</span><h2>Settings</h2></section><section class="card"><div class="grid"><label>Name<input id="pn" value="${esc(state.profile.name)}"></label><label>College/provider<input id="pc" value="${esc(state.profile.college)}"></label><label>Email<input id="pe" value="${esc(state.profile.email)}"></label></div><button class="primary" id="sp">Save profile</button></section><section class="card"><h3>Backup</h3><div class="buttons"><button class="secondary" id="ex">Export backup</button><label class="secondary" style="margin:0">Import backup<input id="im" type="file" accept=".json" style="display:none"></label></div></section><section class="card"><h3>Tutor Buddy</h3><p>Version ${state.version}</p><button class="danger" id="reset">Reset all data</button></section>`;sp.onclick=()=>{state.profile={name:pn.value.trim(),college:pc.value.trim(),email:pe.value.trim()};save();alert("Profile saved.")};ex.onclick=()=>{let b=new Blob([JSON.stringify(state,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="Tutor-Buddy-Backup.json";a.click()};im.onchange=async()=>{try{state=JSON.parse(await im.files[0].text());save();render()}catch(e){alert("Invalid backup.")}};reset.onclick=()=>{if(confirm("Delete all classes and registers?")){localStorage.removeItem(KEY);state=structuredClone(blank);render()}}}
